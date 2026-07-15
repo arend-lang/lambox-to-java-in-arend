@@ -261,3 +261,7 @@
 -- has none) -- bridge by wrapping LBProgram's term in `just`.
 \func LambdaBoxToSrting (p : LBProgram) =>
   sexprToCode (toSExprASTType (untyped p.1 (just p.2)))
+
+-- Renders a Peregrine `--attributes` config file (axiom realizations etc.).
+\func AttributesToString (a : AttributesConfig) : Code =>
+  sexprToCode (toSExprAttributesConfig a)

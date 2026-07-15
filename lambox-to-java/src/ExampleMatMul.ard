@@ -14,7 +14,7 @@
 --     | suc n, a::as, b::bs => add (mul a b) (dot z add mul as bs)
 --   \func matMul {A}(z:A)(add mul:A->A->A)(n m k:Nat)(M:Mat A n m)(N:Mat A m k) : Mat A n k =>
 --     funToVec (\lam r => funToVec (\lam c => dot z add mul (M r) (lookupCol N c)))
---   \func SIZE => 30
+--   \func SIZE => 130
 --   \func randMat : Mat Nat SIZE SIZE => ...
 --   \func res => matMul {Nat} 0 (Nat.+) (Nat.*) SIZE SIZE SIZE randMat randMat
 --
@@ -25,8 +25,8 @@
 --   no longer structurally recurse on the *size* directly, since a primInt
 --   isn't construct-tagged. Every place the source recurred on `n`/`Fin n`
 --   structurally (funToVec's implicit loop bound, nth-style indexing) now
---   needs an explicit primitive comparison/decrement, done via 4 axioms
---   below that a backend must implement natively (see "PRIMITIVE OPS").
+--   needs explicit primitive comparison/subtraction, done via 4 arity-2
+--   axioms below that a backend must implement natively (see "PRIMITIVE OPS").
 --
 -- * `Array A n` is erasure-encoded as an ordinary 2-constructor inductive
 --   `List` (nil/cons) -- lambda-box has no native array/vector former.
@@ -70,24 +70,28 @@
 
 
 -- ---------------------------------------------------------------------------
--- PRIMITIVE OPS -- axioms (no body). A real backend must recognize these
--- specific Kernames in ToJava.ard's `compileDecl`/`compileExpr | const k`
--- and emit native `java.math.BigInteger` add/multiply/subtract-one/isZero
--- instead of the current "axiom ... not implemented" stub. Not implemented
--- here -- this file only builds the LBProgram value.
+-- PRIMITIVE OPS -- axioms (no body). A backend must realize these natively:
+-- for Peregrine's C backend they are remapped (via `matMulAttrs` below /
+-- out/matmul.attr) onto the CertiRocq runtime's arity-2 prim_int63_add /
+-- prim_int63_mul / prim_int63_sub / prim_int63_eqb (prim_int63.{h,c}); the
+-- Java backend (ToJava.ard) would emit java.math.BigInteger equivalents.
+-- All four are ARITY-2 on purpose: the shipped C runtime has no arity-1 ops,
+-- so "sub1 x" is expressed as `sub x 1` and "isZero x" as `eqb x 0`.
+-- eqb's result ABI matches BoolBlock below: mk_bool encodes false as unboxed
+-- ctor 0 and true as ctor 1, exactly our declared constructor order.
 -- ---------------------------------------------------------------------------
 
-\func primAddRef     : LBTerm => const (\new Kername (mpFile nil) "prim_add_int")
-\func primMulRef     : LBTerm => const (\new Kername (mpFile nil) "prim_mul_int")
-\func primSub1Ref    : LBTerm => const (\new Kername (mpFile nil) "prim_sub1_int")
-\func primIsZeroRef  : LBTerm => const (\new Kername (mpFile nil) "prim_is_zero_int")
+\func primAddRef  : LBTerm => const (\new Kername (mpFile nil) "prim_add_int")
+\func primMulRef  : LBTerm => const (\new Kername (mpFile nil) "prim_mul_int")
+\func primSubRef  : LBTerm => const (\new Kername (mpFile nil) "prim_sub_int")
+\func primEqbRef  : LBTerm => const (\new Kername (mpFile nil) "prim_eqb_int")
 
 
 -- ---------------------------------------------------------------------------
 -- buildVec : (int -> A) -> int -> int -> List A
 --   buildVec f remaining idx =
---     if isZero remaining then nil
---     else cons (f idx) (buildVec f (sub1 remaining) (add idx 1))
+--     if eqb remaining 0 then nil
+--     else cons (f idx) (buildVec f (sub remaining 1) (add idx 1))
 --
 -- de Bruijn trace (single fix, k=1):
 --   entering fix body:      [self(0)]
@@ -102,12 +106,12 @@
 
 \func buildVecBody : LBTerm =>
   lambda anon (lambda anon (lambda anon (
-    case boolInd 0 (app primIsZeroRef (bvar 1)) (
-    -- tag 0 = false (remaining /= 0): cons (f idx) (buildVec f (sub1 remaining) (add idx 1))
+    case boolInd 0 (app2 primEqbRef (bvar 1) (prim (primInt, 0))) (
+    -- tag 0 = false (remaining /= 0): cons (f idx) (buildVec f (sub remaining 1) (add idx 1))
       (nil,
        listConsC (app (bvar 2) (bvar 0))
            (app3 (bvar 3) (bvar 2)
-               (app primSub1Ref (bvar 1))
+               (app2 primSubRef (bvar 1) (prim (primInt, 1)))
                (app2 primAddRef (bvar 0) (prim (primInt, 1))))) ::
       -- tag 1 = true (remaining == 0): nil
       (nil, listNilC) ::
@@ -137,7 +141,7 @@
 -- nth : List A -> int -> A       (partial: undefined/dummy if out of bounds)
 --   nth xs c = case xs of
 --                nil        => <dummy>
---                cons hd tl => if isZero c then hd else nth tl (sub1 c)
+--                cons hd tl => if eqb c 0 then hd else nth tl (sub c 1)
 --
 -- de Bruijn trace (single fix, k=1):
 --   entering fix body:   [self(0)]
@@ -145,7 +149,7 @@
 --   after \lam c:         [c(0), xs(1), self(2)]        <- outer case scrutinee = xs = bvar 1
 --   cons branch (2 binders hd,tl; LAST binder = bvar 0, per iota_red):
 --                         [tl(0), hd(1), c(2), xs(3), self(4)]
---   inner case (isZero c) has 0-field branches, env unchanged in both arms.
+--   inner case (eqb c 0) has 0-field branches, env unchanged in both arms.
 -- ---------------------------------------------------------------------------
 
 \func nthRef : LBTerm => const (\new Kername (mpFile nil) "nth")
@@ -155,8 +159,8 @@
     case listInd 0 (bvar 1) (
       (nil, prim (primInt, 0)) ::                                    -- nil: out of bounds, unreachable given SIZE invariants
       ((anon :: anon :: nil),
-       case boolInd 0 (app primIsZeroRef (bvar 2)) (
-         (nil, app2 (bvar 4) (bvar 0) (app primSub1Ref (bvar 2))) ::  -- c /= 0: nth tl (sub1 c)
+       case boolInd 0 (app2 primEqbRef (bvar 2) (prim (primInt, 0))) (
+         (nil, app2 (bvar 4) (bvar 0) (app2 primSubRef (bvar 2) (prim (primInt, 1)))) ::  -- c /= 0: nth tl (sub c 1)
          (nil, bvar 1) ::                                             -- c == 0: hd
          nil
        )) ::
@@ -290,7 +294,7 @@
 -- SIZE / randNat / randVec / randMat / res
 -- ---------------------------------------------------------------------------
 
-\func sizeLit : LBTerm => prim (primInt, 30)
+\func sizeLit : LBTerm => prim (primInt, 130)
 
 \func randNatRef  : LBTerm => const (\new Kername (mpFile nil) "randNat")
 \func randVecRef  : LBTerm => const (\new Kername (mpFile nil) "randVec")
@@ -362,9 +366,9 @@
 -- ---------------------------------------------------------------------------
 -- sumRes := sumMat res
 --
--- Hand-checkable expected value: randMat is a 30x30 matrix of all 1s, so
--- every entry of res = dot(0,+,*, row-of-30-1s, col-of-30-1s) = 30, and
--- sumRes = 30 * 30 * 30 = 27000.
+-- Hand-checkable expected value: randMat is a 130x130 matrix of all 1s, so
+-- every entry of res = dot(0,+,*, row-of-130-1s, col-of-130-1s) = 130, and
+-- sumRes = 130 * 130 * 130 = 2197000.
 -- ---------------------------------------------------------------------------
 
 \func sumResRef : LBTerm => const (\new Kername (mpFile nil) "sumRes")
@@ -395,10 +399,10 @@
   (\new Kername (mpFile nil) "lookupCol", constantDecl (\new ConstantBody (just lookupColFix))) ::
   (\new Kername (mpFile nil) "nth",       constantDecl (\new ConstantBody (just nthFix))) ::
   (\new Kername (mpFile nil) "buildVec",  constantDecl (\new ConstantBody (just buildVecFix))) ::
-  (\new Kername (mpFile nil) "prim_is_zero_int", constantDecl (\new ConstantBody nothing)) ::
-  (\new Kername (mpFile nil) "prim_sub1_int",    constantDecl (\new ConstantBody nothing)) ::
-  (\new Kername (mpFile nil) "prim_mul_int",     constantDecl (\new ConstantBody nothing)) ::
-  (\new Kername (mpFile nil) "prim_add_int",     constantDecl (\new ConstantBody nothing)) ::
+  (\new Kername (mpFile nil) "prim_eqb_int", constantDecl (\new ConstantBody nothing)) ::
+  (\new Kername (mpFile nil) "prim_sub_int", constantDecl (\new ConstantBody nothing)) ::
+  (\new Kername (mpFile nil) "prim_mul_int", constantDecl (\new ConstantBody nothing)) ::
+  (\new Kername (mpFile nil) "prim_add_int", constantDecl (\new ConstantBody nothing)) ::
   (\new Kername (mpFile nil) "BoolBlock", inductiveDecl (\new MutualInductiveBody finite 0
                                                               ((\new OneInductiveBody "Bool" false IntoAny
                                                                      ((\new ConstructorBody "false" 0) :: (\new ConstructorBody "true" 0) :: nil)
@@ -409,10 +413,56 @@
                                                                      nil) :: nil))) ::
   nil
 
--- Entry point is sumRes (prints a single number, expected 27000) rather than
--- res (which would print the full 30x30 nested Data tree). Swap to `resRef`
--- if you want to inspect the raw matrix instead.
+-- Entry point is sumRes (prints a single number, expected 2197000) rather
+-- than res (which would print the full 130x130 nested Data tree). Swap to
+-- `resRef` if you want to inspect the raw matrix instead.
 \func matMulProgram : LBProgram => (decls, sumResRef)
+
+-- ---------------------------------------------------------------------------
+-- Peregrine attributes configs: realize the 4 primitive-op axioms per
+-- backend. Fields of RemappedConstant: ext / arity / needs-GC / inline /
+-- target. Pass the printed file to a peregrine subcommand via `--attributes`.
+--
+-- `\new RemappedConstant ...` is written INLINE at each entry (no shared
+-- helper \func) for the same reason all Kernames are inline: a String field
+-- read through a helper-\func call stays stuck at typecheck time (the known
+-- String-field/isProperty bug), printing `reConstS {primRemap ...}` instead
+-- of the target name; field access on a literal \new reduces fine.
+--
+-- C backend: remaps onto the CertiRocq C runtime's prim_int63 functions
+-- (~/.opam/peregrine/.../CertiRocq/Plugin/runtime/prim_int63.{h,c}).
+-- ---------------------------------------------------------------------------
+
+\func matMulAttrsC : AttributesConfig =>
+  \new AttributesConfig nil
+      ((\new Kername (mpFile nil) "prim_add_int",
+        \new RemappedConstant (just "prim_int63.h") 2 false false "prim_int63_add") ::
+       (\new Kername (mpFile nil) "prim_mul_int",
+        \new RemappedConstant (just "prim_int63.h") 2 false false "prim_int63_mul") ::
+       (\new Kername (mpFile nil) "prim_sub_int",
+        \new RemappedConstant (just "prim_int63.h") 2 false false "prim_int63_sub") ::
+       (\new Kername (mpFile nil) "prim_eqb_int",
+        \new RemappedConstant (just "prim_int63.h") 2 false false "prim_int63_eqb") ::
+       nil)
+      nil nil nil
+
+-- OCaml (Malfunction) backend: only `reConstS` is consumed (ext/arity/gc/inl
+-- are all ignored by OCamlBackend.v's `mk_remaps`), and it must be a single
+-- "Module.value" path (split on the LAST '.' only) naming a real OCaml
+-- global -- here a hand-written wrapper module `Prim_int63` (out/prim_int63.ml),
+-- compiled and made visible to `malfunction cmx` via the cwd search path.
+\func matMulAttrsOCaml : AttributesConfig =>
+  \new AttributesConfig nil
+      ((\new Kername (mpFile nil) "prim_add_int",
+        \new RemappedConstant nothing 2 false false "Prim_int63.add") ::
+       (\new Kername (mpFile nil) "prim_mul_int",
+        \new RemappedConstant nothing 2 false false "Prim_int63.mul") ::
+       (\new Kername (mpFile nil) "prim_sub_int",
+        \new RemappedConstant nothing 2 false false "Prim_int63.sub") ::
+       (\new Kername (mpFile nil) "prim_eqb_int",
+        \new RemappedConstant nothing 2 false false "Prim_int63.eqb") ::
+       nil)
+      nil nil nil
 
 \import ToJava
 \import Debug.Meta
@@ -421,3 +471,5 @@
 
 \import Serialize
 \func ser => printArr (LambdaBoxToSrting matMulProgram)
+\func attrsC => printArr (AttributesToString matMulAttrsC)
+\func attrsOCaml => printArr (AttributesToString matMulAttrsOCaml)
