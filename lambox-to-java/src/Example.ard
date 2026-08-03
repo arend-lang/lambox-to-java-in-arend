@@ -1,6 +1,7 @@
 \import LambdaBox
 \import Data.Bool
 \import Data.Maybe
+\import Data.String
 
 -- =========================================================================
 -- Minimal covering test program for LBProgram
@@ -136,10 +137,5 @@
 \func testProgram : LBProgram =>
   (decls, app (const knMain) (natSucc natZero))
 
-\import ToJava
-\import Debug.Meta
-
--- \func main => printArr (compileProgram testProgram)
-
-\import Serialize
-\func ser => printArr (LambdaBoxToSrting testProgram)
+-- Printing the generated Java source lives in ExamplePrint.ard: it needs a
+-- much larger stack than checking these definitions does.

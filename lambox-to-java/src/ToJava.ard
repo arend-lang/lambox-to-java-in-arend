@@ -1,11 +1,11 @@
 \import LambdaBox
 \import Data.Maybe
-\import Code
+\import Data.String
+\import StringUtil
 
 -- =============================================================================
--- v2: lambda-box (LBTerm) -> Java source generator, using Code (Code.ard)
--- instead of String throughout, since String has no concatenation in Arend
--- (see Code.ard for why). Everything below is otherwise unchanged from v1:
+-- v2: lambda-box (LBTerm) -> Java source generator, using String (String.ard) as
+-- the text type (nowadays just `String`, see String.ard).
 --
 -- Termination approach: Arend's foetus/size-change checker rejects a separate
 -- list-typed helper that calls compileExpr (it crosses the LBTerm <-> Array
@@ -14,11 +14,11 @@
 -- INLINE via `xs i` / direct projections like `(brs i).2` (same type, indexed
 -- sub-term / direct projection of the recursion argument) -- never through a
 -- `\case`-bound variable, which loses the structural link the checker needs.
--- The per-child Code results are then combined by folds (concatStmts/
--- joinExprs/concatC) that do NOT call compileExpr, so they terminate on their
+-- The per-child String results are then combined by folds (concatStmts/
+-- joinExprs/concatStr) that do NOT call compileExpr, so they terminate on their
 -- own.
 --
--- No fresh-name counter: a structural `path : Code` is passed DOWN and
+-- No fresh-name counter: a structural `path : String` is passed DOWN and
 -- branched per child, so names are unique without left-to-right state
 -- threading (which would force a sequential helper).
 --
@@ -27,161 +27,164 @@
 -- constants -> zero-arg static methods; fix -> mutable `Fn[]` knot-tying.
 -- =============================================================================
 
--- Compilation result: (statements, value-expression), both Code now.
-\func Out : \Type => \Sigma Code Code
+-- Compilation result: (statements, value-expression), both plain String.
+\func Out : \Type => \Sigma String String
 
--- de Bruijn lookup: env head = index 0. Bound names are Code (built from
--- literal fragments + path), not String.
-\func nthName (n : Nat) (env : Array Code) : Code \elim n, env
-  | _, nil => litC "/*UNBOUND*/null"
+-- de Bruijn lookup: env head = index 0. A bound name is a literal prefix
+-- concatenated with the node's `path`.
+\func nthName (n : Nat) (env : Array String) : String \elim n, env
+  | _, nil => "/*UNBOUND*/null"
   | 0, x :: _ => x
   | suc n, _ :: env => nthName n env
 
 -- Folds over per-child results. None call compileExpr -> separate SCC.
-\func concatStmts (rs : Array Out) : Code \elim rs
-  | nil => nilC
-  | r :: rs => r.1 <+> concatStmts rs
+\func concatStmts (rs : Array Out) : String \elim rs
+  | nil => ""
+  | r :: rs => r.1 ++ concatStmts rs
 
-\func joinExprs (rs : Array Out) : Code \elim rs
-  | nil => nilC
+\func joinExprs (rs : Array Out) : String \elim rs
+  | nil => ""
   | r :: nil => r.2
-  | r :: rs => r.2 <+> litC ", " <+> joinExprs rs
+  | r :: rs => r.2 ++ ", " ++ joinExprs rs
 
--- Kername -> Java method name.
-\func joinDirs (ds : Array String) : Code \elim ds
-  | nil => nilC
-  | d :: nil => sanitize d
-  | d :: ds => sanitize d <+> litC "_" <+> joinDirs ds
+-- Kername -> Java method name. Identifiers arriving from the source are assumed
+-- to be valid Java identifiers already; real sanitization (replacing illegal
+-- characters) would need byte/char-level rewriting and belongs at the
+-- host/extension boundary.
+\func joinDirs (ds : Array String) : String \elim ds
+  | nil => ""
+  | d :: nil => d
+  | d :: ds => d ++ "_" ++ joinDirs ds
 
-\func mangleModPath (mp : ModPath) : Code \elim mp
+\func mangleModPath (mp : ModPath) : String \elim mp
   | mpFile dp => joinDirs dp
-  | mpBound dp id n => joinDirs dp <+> litC "_" <+> sanitize id <+> litC "_" <+> natToStr n
-  | mpDot mp id => mangleModPath mp <+> litC "_" <+> sanitize id
+  | mpBound dp id n => joinDirs dp ++ "_" ++ id ++ "_" ++ natToStr n
+  | mpDot mp id => mangleModPath mp ++ "_" ++ id
 
-\func mangleKername (k : Kername) : Code =>
-  litC "c_" <+> mangleModPath k.kerModPath <+> litC "__" <+> sanitize k.kerName
+\func mangleKername (k : Kername) : String =>
+  "c_" ++ mangleModPath k.kerModPath ++ "__" ++ k.kerName
 
 -- Bind a branch's fields to fresh locals, starting at field index `fieldIx`
 -- (= npars, to skip inductive parameters). Returns (bind-statements, extended env).
 -- Recurses on the binder array only; never calls compileExpr.
 -- Pushing left-to-right makes the LAST binder de Bruijn index 0 (matches iota_red).
-\func bindFields (dv : Code) (fieldIx : Nat) (bs : Array BinderName) (env : Array Code) (path : Code)
-  : \Sigma Code (Array Code) \elim bs
-  | nil => (nilC, env)
+\func bindFields (dv : String) (fieldIx : Nat) (bs : Array BinderName) (env : Array String) (path : String)
+  : \Sigma String (Array String) \elim bs
+  | nil => ("", env)
   | _ :: bs =>
-    \let | nm => litC "g" <+> natToStr fieldIx <+> path
-         | st => litC "final Object " <+> nm <+> litC " = " <+> dv <+> litC ".fields[" <+> natToStr fieldIx <+> litC "]; "
+    \let | nm => "g" ++ natToStr fieldIx ++ path
+         | st => "final Object " ++ nm ++ " = " ++ dv ++ ".fields[" ++ natToStr fieldIx ++ "]; "
          | r  => bindFields dv (suc fieldIx) bs (nm :: env) path
-    \in (st <+> r.1, r.2)
+    \in (st ++ r.1, r.2)
 
 -- Push the k fix-slot names arr[0..k-1] onto env; head = arr[k-1] = de Bruijn 0
 -- (= the LAST mutually-defined function, matching λ□'s fix_subst). No compileExpr.
-\func pushFix (arr : Code) (j k : Nat) (env : Array Code) : Array Code \elim k
+\func pushFix (arr : String) (j k : Nat) (env : Array String) : Array String \elim k
   | 0 => env
-  | suc k => pushFix arr (suc j) k ((arr <+> litC "[" <+> natToStr j <+> litC "]") :: env)
+  | suc k => pushFix arr (suc j) k ((arr ++ "[" ++ natToStr j ++ "]") :: env)
 
 -- Core compiler. `path` uniquely identifies this node; binder names and child
 -- paths are derived from it, so no state threading is needed.
-\func compileExpr (env : Array Code) (path : Code) (t : LBTerm) : Out \elim t
-  | box => (nilC, litC "Prog.BOX")
+\func compileExpr (env : Array String) (path : String) (t : LBTerm) : Out \elim t
+  | box => ("", "Prog.BOX")
 
-  | bvar n => (nilC, nthName n env)
+  | bvar n => ("", nthName n env)
 
-  | fvar _ => (nilC, litC "/*FVAR*/null")
+  | fvar _ => ("", "/*FVAR*/null")
 
-  | prim (primInt, i) => (nilC, litC "new java.math.BigInteger(\"" <+> intToStr i <+> litC "\")")
+  | prim (primInt, i) => ("", "new java.math.BigInteger(\"" ++ intToStr i ++ "\")")
 
-  | const k => (nilC, mangleKername k <+> litC "()")
+  | const k => ("", mangleKername k ++ "()")
 
   | app f a =>
-    \let | of => compileExpr env (litC "F" <+> path) f
-         | oa => compileExpr env (litC "A" <+> path) a
-    \in (of.1 <+> oa.1, litC "((Prog.Fn)(" <+> of.2 <+> litC ")).apply(" <+> oa.2 <+> litC ")")
+    \let | of => compileExpr env ("F" ++ path) f
+         | oa => compileExpr env ("A" ++ path) a
+    \in (of.1 ++ oa.1, "((Prog.Fn)(" ++ of.2 ++ ")).apply(" ++ oa.2 ++ ")")
 
   | lambda _ body =>
-    \let | pv => litC "p" <+> path
-         | ob => compileExpr (pv :: env) (litC "L" <+> path) body
-    \in (nilC, litC "new Prog.Fn(){ public Object apply(Object " <+> pv <+> litC "){ " <+> ob.1 <+> litC " return " <+> ob.2 <+> litC "; } }")
+    \let | pv => "p" ++ path
+         | ob => compileExpr (pv :: env) ("L" ++ path) body
+    \in ("", "new Prog.Fn(){ public Object apply(Object " ++ pv ++ "){ " ++ ob.1 ++ " return " ++ ob.2 ++ "; } }")
 
   | letIn _ value body =>
-    \let | ov => compileExpr env (litC "V" <+> path) value
-         | lv => litC "l" <+> path
-         | ob => compileExpr (lv :: env) (litC "B" <+> path) body
-    \in (ov.1 <+> litC "final Object " <+> lv <+> litC " = " <+> ov.2 <+> litC "; " <+> ob.1, ob.2)
+    \let | ov => compileExpr env ("V" ++ path) value
+         | lv => "l" ++ path
+         | ob => compileExpr (lv :: env) ("B" ++ path) body
+    \in (ov.1 ++ "final Object " ++ lv ++ " = " ++ ov.2 ++ "; " ++ ob.1, ob.2)
 
   -- construct: recurse inline over the Array of args.
   | construct _ cidx args =>
-    \let | results => \new Array Out args.len (\lam i => compileExpr env (litC "c" <+> natToStr i <+> path) (args i))
+    \let | results => \new Array Out args.len (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
     \in (concatStmts results,
-         litC "new Prog.Data(" <+> natToStr cidx <+> litC ", new Object[]{ " <+> joinExprs results <+> litC " })")
+         "new Prog.Data(" ++ natToStr cidx ++ ", new Object[]{ " ++ joinExprs results ++ " })")
 
   -- case: switch on the scrutinee's tag; each branch binds fields[npars ..] then
   -- evaluates its body. We map inline over `brs i`, binding the body by pattern.
   | case _ npars scrut brs =>
-    \let | os => compileExpr env (litC "S" <+> path) scrut
-         | dv => litC "d" <+> path
-         | rv => litC "r" <+> path
+    \let | os => compileExpr env ("S" ++ path) scrut
+         | dv => "d" ++ path
+         | rv => "r" ++ path
          -- Recurse on the DIRECT projection `(brs i).2`, NOT a `\case`-bound
          -- variable: the checker tracks `(brs i).2 < t` (index into the sub-term
          -- `brs`, then project) but loses that through a `\case` pattern binding.
-         | cases => \new Array Code brs.len (\lam i =>
-             \let | bp  => litC "b" <+> natToStr i <+> path
+         | cases => \new Array String brs.len (\lam i =>
+             \let | bp  => "b" ++ natToStr i ++ path
                   | bnd => bindFields dv npars (brs i).1 env bp
                   | ob  => compileExpr bnd.2 bp (brs i).2
-             \in litC "case " <+> natToStr i <+> litC ": { " <+> bnd.1 <+> ob.1
-                                                                             <+> rv <+> litC " = " <+> ob.2 <+> litC "; break; } ")
+             \in "case " ++ natToStr i ++ ": { " ++ bnd.1 ++ ob.1
+                  ++ rv ++ " = " ++ ob.2 ++ "; break; } ")
     \in (os.1
-           <+> litC "final Prog.Data " <+> dv <+> litC " = (Prog.Data)(" <+> os.2 <+> litC "); "
-                                                                                        <+> litC "Object " <+> rv <+> litC "; "
-                                                                                                                        <+> litC "switch (" <+> dv <+> litC ".tag) { " <+> concatC cases
-                                                                                                                                                                             <+> litC "default: throw new RuntimeException(\"no matching branch\"); } ",
+           ++ "final Prog.Data " ++ dv ++ " = (Prog.Data)(" ++ os.2 ++ "); "
+           ++ "Object " ++ rv ++ "; "
+           ++ "switch (" ++ dv ++ ".tag) { " ++ concatStr cases
+           ++ "default: throw new RuntimeException(\"no matching branch\"); } ",
          rv)
 
   | proj pinfo scrut =>
-    \let | os => compileExpr env (litC "P" <+> path) scrut
+    \let | os => compileExpr env ("P" ++ path) scrut
     \in (os.1,
-         litC "((Prog.Data)(" <+> os.2 <+> litC ")).fields["
-                                             <+> natToStr (pinfo.projParamCount) <+> litC " + " <+> natToStr (pinfo.projFieldIdx) <+> litC "]")
+         "((Prog.Data)(" ++ os.2 ++ ")).fields["
+           ++ natToStr (pinfo.projParamCount) ++ " + " ++ natToStr (pinfo.projFieldIdx) ++ "]")
 
   -- fix: mutable Fn[] + knot-tying; map inline over `defs j`, projecting the
   -- body directly (`(defs j).defBody`), same reasoning as `case` above.
   | fix defs idx =>
-    \let | arr => litC "x" <+> path
+    \let | arr => "x" ++ path
          | k   => defs.len
          | env' => pushFix arr 0 k env
-         | assigns => \new Array Code k (\lam j =>
-             \let | ob => compileExpr env' (litC "y" <+> natToStr j <+> path) (defs j).defBody
-             \in ob.1 <+> arr <+> litC "[" <+> natToStr j <+> litC "] = (Prog.Fn)(" <+> ob.2 <+> litC "); "
+         | assigns => \new Array String k (\lam j =>
+             \let | ob => compileExpr env' ("y" ++ natToStr j ++ path) (defs j).defBody
+             \in ob.1 ++ arr ++ "[" ++ natToStr j ++ "] = (Prog.Fn)(" ++ ob.2 ++ "); "
          )
-    \in (litC "final Prog.Fn[] " <+> arr <+> litC " = new Prog.Fn[" <+> natToStr k <+> litC "]; " <+> concatC assigns,
-         arr <+> litC "[" <+> natToStr idx <+> litC "]")
+    \in ("final Prog.Fn[] " ++ arr ++ " = new Prog.Fn[" ++ natToStr k ++ "]; " ++ concatStr assigns,
+         arr ++ "[" ++ natToStr idx ++ "]")
 
 
 -- ---------------------------------------------------------------------------
 -- Program assembly.
 -- ---------------------------------------------------------------------------
 
-\func compileDecl (kd : \Sigma Kername GlobalDecl) : Code =>
+\func compileDecl (kd : \Sigma Kername GlobalDecl) : String =>
   \let | name => mangleKername kd.1
   \in \case kd.2 \with {
     | constantDecl cb => \case cb.cstBody \with {
       | just body =>
-        \let | o => compileExpr nil nilC body
-        \in litC "  public static Object " <+> name <+> litC "(){ " <+> o.1 <+> litC " return " <+> o.2 <+> litC "; }\n"
+        \let | o => compileExpr nil "" body
+        \in "  public static Object " ++ name ++ "(){ " ++ o.1 ++ " return " ++ o.2 ++ "; }\n"
       | nothing =>
-        litC "  public static Object " <+> name <+> litC "(){ throw new RuntimeException(\"axiom " <+> name <+> litC " not implemented\"); }\n"
+        "  public static Object " ++ name ++ "(){ throw new RuntimeException(\"axiom " ++ name ++ " not implemented\"); }\n"
     }
-    | inductiveDecl _ => litC "  /* inductive " <+> name <+> litC ": erased; values use Data(tag, fields) */\n"
+    | inductiveDecl _ => "  /* inductive " ++ name ++ ": erased; values use Data(tag, fields) */\n"
   }
 
-\func compileDecls (ds : GlobalDeclarations) : Code \elim ds
-  | nil => nilC
-  | d :: ds => compileDecl d <+> compileDecls ds
+\func compileDecls (ds : GlobalDeclarations) : String \elim ds
+  | nil => ""
+  | d :: ds => compileDecl d ++ compileDecls ds
 
-\func compileMain (t : LBTerm) : Code =>
-  \let | o => compileExpr nil nilC t
-  \in litC "  public static Object __main(){ " <+> o.1 <+> litC " return " <+> o.2 <+> litC "; }\n" <+>
-                                                                                       litC "  public static void main(String[] args){ System.out.println(__main()); }\n"
+\func compileMain (t : LBTerm) : String =>
+  \let | o => compileExpr nil "" t
+  \in "  public static Object __main(){ " ++ o.1 ++ " return " ++ o.2 ++ "; }\n" ++
+     "  public static void main(String[] args){ System.out.println(__main()); }\n"
 
 -- `Fn`/`Data` toString overrides: purely for making printed program output
 -- human-readable (e.g. inspecting `System.out.println(__main())`). Data's is a
@@ -190,37 +193,36 @@
 -- pattern-switch) per the classic-bytecode-only codegen style used everywhere
 -- else here. Fn can't show anything structural (it's a compiled closure), so
 -- it just gets a fixed placeholder instead of a raw hashcode.
-\func compileProgram (p : LBProgram) : Code =>
-  litC "public final class Prog {\n" <+>
-  litC "  public interface Fn {\n" <+>
-  litC "    Object apply(Object x);\n" <+>
-  litC "  }\n" <+>
-  litC "  public static final class Data {\n" <+>
-  litC "    public final int tag;\n" <+>
-  litC "    public final Object[] fields;\n" <+>
-  litC "    public Data(int tag, Object[] fields){ this.tag = tag; this.fields = fields; }\n" <+>
-  litC "    @Override public String toString(){ return toString(0); }\n" <+>
-  litC "    public String toString(int indent){\n" <+>
-  litC "      StringBuilder sb = new StringBuilder();\n" <+>
-  litC "      sb.append(tag);\n" <+>
-  litC "      if (fields.length == 0) return sb.toString();\n" <+>
-  litC "      sb.append(\"(\\n\");\n" <+>
-  litC "      for (int i = 0; i < fields.length; i++) {\n" <+>
-  litC "        for (int j = 0; j < indent + 1; j++) sb.append(\"  \");\n" <+>
-  litC "        Object f = fields[i];\n" <+>
-  litC "        if (f instanceof Data) { sb.append(((Data) f).toString(indent + 1)); } else { sb.append(String.valueOf(f)); }\n" <+>
-  litC "        if (i < fields.length - 1) sb.append(\",\");\n" <+>
-  litC "        sb.append(\"\\n\");\n" <+>
-  litC "      }\n" <+>
-  litC "      for (int j = 0; j < indent; j++) sb.append(\"  \");\n" <+>
-  litC "      sb.append(\")\");\n" <+>
-  litC "      return sb.toString();\n" <+>
-  litC "    }\n" <+>
-  litC "  }\n" <+>
-  litC "  public static final Object BOX = new Object();\n" <+>
-  compileDecls p.1 <+> compileMain p.2 <+> litC "}\n"
+\func compileProgram (p : LBProgram) : String =>
+  "public final class Prog {\n" ++
+  "  public interface Fn {\n" ++
+  "    Object apply(Object x);\n" ++
+  "  }\n" ++
+  "  public static final class Data {\n" ++
+  "    public final int tag;\n" ++
+  "    public final Object[] fields;\n" ++
+  "    public Data(int tag, Object[] fields){ this.tag = tag; this.fields = fields; }\n" ++
+  "    @Override public String toString(){ return toString(0); }\n" ++
+  "    public String toString(int indent){\n" ++
+  "      StringBuilder sb = new StringBuilder();\n" ++
+  "      sb.append(tag);\n" ++
+  "      if (fields.length == 0) return sb.toString();\n" ++
+  "      sb.append(\"(\\n\");\n" ++
+  "      for (int i = 0; i < fields.length; i++) {\n" ++
+  "        for (int j = 0; j < indent + 1; j++) sb.append(\"  \");\n" ++
+  "        Object f = fields[i];\n" ++
+  "        if (f instanceof Data) { sb.append(((Data) f).toString(indent + 1)); } else { sb.append(String.valueOf(f)); }\n" ++
+  "        if (i < fields.length - 1) sb.append(\",\");\n" ++
+  "        sb.append(\"\\n\");\n" ++
+  "      }\n" ++
+  "      for (int j = 0; j < indent; j++) sb.append(\"  \");\n" ++
+  "      sb.append(\")\");\n" ++
+  "      return sb.toString();\n" ++
+  "    }\n" ++
+  "  }\n" ++
+  "  public static final Object BOX = new Object();\n" ++
+  compileDecls p.1 ++ compileMain p.2 ++ "}\n"
 
--- Print a generated program via the `printArr` meta (Array String -> console,
--- fragments joined with nothing in between).
--- \import Debug.Meta
--- \func main => printArr (compileProgram (nil, prim (primInt, -44)))
+-- Print a generated program with `putStrLn` (Data.String -> console).
+-- \import Debug
+-- \func main => putStrLn (compileProgram (nil, prim (primInt, -44)))

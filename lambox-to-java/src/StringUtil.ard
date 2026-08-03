@@ -1,0 +1,54 @@
+\import Data.String
+
+-- =============================================================================
+-- Small String helpers used by the code generators (ToJava, Serialize).
+--
+-- Generated text is plain `Data.String.String`, concatenated with its native,
+-- pure `++`. Historically Arend's `String` was opaque (`\data String`, no
+-- constructors, no eliminator), so no pure Arend function could concatenate two
+-- Strings; the code generator therefore worked against a `Code` rope (`Array
+-- String` of literal fragments) declared in `Code.ard`. `String` is a real
+-- record over `Array Byte` now, so that workaround -- the `Code` type, `<+>`,
+-- `litC`, `nilC` -- is gone, and only the genuinely missing pieces are left
+-- here: decimal rendering of numbers and a flat concatenation of an array.
+-- =============================================================================
+
+-- Concatenate an array of String fragments (no separator).
+\func concatStr (xs : Array String) : String \elim xs
+  | nil => ""
+  | x :: xs => x ++ concatStr xs
+
+\func digitLit (d : Nat) : String
+  | 0 => "0" | 1 => "1" | 2 => "2" | 3 => "3" | 4 => "4"
+  | 5 => "5" | 6 => "6" | 7 => "7" | 8 => "8" | 9 => "9"
+  | _ => "?"  -- unreachable: only ever called with d = _ mod 10
+
+-- Decimal rendering of a Nat. `n Nat.div 10` is not a sub-pattern of `n`, so
+-- the termination checker can't see it as structurally smaller; recursing on
+-- an explicit `fuel` (seeded to `n`, always more than enough since dividing by
+-- 10 needs far fewer steps than `n`) gives it a real structural decrease.
+-- Recurring on the quotient BEFORE appending the remainder digit produces
+-- digits in the correct most-significant-first order (checked: natToStr 42 =
+-- natToStrFuel _ 4 ++ "2" = "4" ++ "2" = "42").
+\func natToStrFuel (fuel n : Nat) : String \elim fuel
+  | 0 => "0"
+  | suc fuel =>
+    \let | q => n Nat.div 10
+         | r => n Nat.mod 10
+    \in \case q \with {
+      | 0 => digitLit r
+      | suc _ => natToStrFuel fuel q ++ digitLit r
+    }
+
+\func natToStr (n : Nat) : String =>
+  \case n \with {
+    | 0 => "0"
+    | suc _ => natToStrFuel n n
+  }
+
+-- `neg zero` is DEFINITIONALLY `pos zero` (see Int's constructor condition in
+-- Prelude.ard), so the `neg 0` clause must agree with `pos 0`'s -- no "-".
+\func intToStr (i : Int) : String \elim i
+  | pos n => natToStr n
+  | neg 0 => natToStr 0
+  | neg (suc n) => "-" ++ natToStr (suc n)

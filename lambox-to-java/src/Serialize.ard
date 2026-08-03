@@ -1,7 +1,8 @@
-\import Code
+\import StringUtil
 \import LambdaBox
 \import Data.Bool
 \import Data.Maybe
+\import Data.String
 
 -- =============================================================================
 -- S-expression serializer for the lambda-box AST, translated by hand from
@@ -19,12 +20,9 @@
 --   serializer as an explicit function argument instead of instance search
 --   (`toSExprArray`, `toSExprMaybe`).
 --
--- * `sexpr.atom` holds a `Code`, not a `String`: String is opaque in Arend
---   (see Code.ard), and numeral atoms (`natToStr`/`intToStr`) are themselves
---   multi-fragment Code values, not single String literals -- `atom` has to
---   be able to hold those without concatenating them into one String first.
---   `sexpr.toString` becomes `sexprToCode : Sexpr -> Code`; flattening to an
---   actual printed String happens only at the very end, via `printArr`.
+-- * `sexpr.atom` holds a `String` (the generated-text type of String.ard, today a
+--   plain `String`), so numeral atoms (`natToStr`/`intToStr`) fit in it as-is.
+--   `sexpr.toString` becomes `sexprToString : Sexpr -> String`.
 --
 -- * Per ToJava.ard's established termination-checker idiom: recursing over
 --   an `Array LBTerm`/`Array (FixDef LBTerm)`/case-branch bodies through a
@@ -45,24 +43,24 @@
 
 
 -- ---------------------------------------------------------------------------
--- Sexpr and its rendering to Code.
+-- Sexpr and its rendering to String.
 -- ---------------------------------------------------------------------------
 
 \data Sexpr
-  | atomS Code
+  | atomS String
   | listS (Array Sexpr)
 
-\func joinWithSpaces (xs : Array Code) : Code \elim xs
-  | nil => nilC
+\func joinWithSpaces (xs : Array String) : String \elim xs
+  | nil => ""
   | x :: nil => x
-  | x :: xs => x <+> litC " " <+> joinWithSpaces xs
+  | x :: xs => x ++ " " ++ joinWithSpaces xs
 
-\func sexprToCode (e : Sexpr) : Code \elim e
+\func sexprToString (e : Sexpr) : String \elim e
   | atomS c => c
   | listS xs =>
-    litC "(" <+> joinWithSpaces (\new Array Code xs.len (\lam i => sexprToCode (xs i))) <+> litC ")"
+    "(" ++ joinWithSpaces (\new Array String xs.len (\lam i => sexprToString (xs i))) ++ ")"
 
-\func quoteAtom (c : Code) : Code => litC "\"" <+> c <+> litC "\""
+\func quoteAtom (c : String) : String => "\"" ++ c ++ "\""
 
 -- Peregrine's build has `cstr_as_blocks = false` (EWellformed.all_env_flags),
 -- meaning `tConstruct` must always carry an EMPTY arg list -- constructor
@@ -73,7 +71,7 @@
 -- this is a plain, non-Sexpr-recursive fold -- no termination concern.
 \func wrapTApp (base : Sexpr) (args : Array Sexpr) : Sexpr \elim args
   | nil => base
-  | a :: rest => wrapTApp (listS (atomS (litC "tApp") :: base :: a :: nil)) rest
+  | a :: rest => wrapTApp (listS (atomS ("tApp") :: base :: a :: nil)) rest
 
 
 -- ---------------------------------------------------------------------------
@@ -86,8 +84,8 @@
   listS (\new Array Sexpr xs.len (\lam i => f (xs i)))
 
 \func toSExprMaybe {A : \Type} (f : A -> Sexpr) (m : Maybe A) : Sexpr \elim m
-  | nothing => atomS (litC "None")
-  | just a => listS (atomS (litC "Some") :: f a :: nil)
+  | nothing => atomS ("None")
+  | just a => listS (atomS ("Some") :: f a :: nil)
 
 
 -- ---------------------------------------------------------------------------
@@ -96,34 +94,34 @@
 
 \func toSExprNat (n : Nat) : Sexpr => atomS (natToStr n)
 
-\func toSExprIdent (s : Ident) : Sexpr => atomS (quoteAtom (litC s))
+\func toSExprIdent (s : Ident) : Sexpr => atomS (quoteAtom (s))
 
 \func toSExprBool (b : Bool) : Sexpr \elim b
-  | false => atomS (litC "false")
-  | true => atomS (litC "true")
+  | false => atomS ("false")
+  | true => atomS ("true")
 
 \func toSExprBinderName (b : BinderName) : Sexpr \elim b
-  | named fv => listS (atomS (litC "nNamed") :: toSExprIdent fv.varName :: nil)
-  | anon => atomS (litC "nAnon")
+  | named fv => listS (atomS ("nNamed") :: toSExprIdent fv.varName :: nil)
+  | anon => atomS ("nAnon")
 
 \func toSExprModPath (mp : ModPath) : Sexpr \elim mp
-  | mpFile dp => listS (atomS (litC "MPfile") :: toSExprArray toSExprIdent dp :: nil)
+  | mpFile dp => listS (atomS ("MPfile") :: toSExprArray toSExprIdent dp :: nil)
   | mpBound dp id n =>                                                              -- extension, no Lean counterpart
-    listS (atomS (litC "MPbound") :: toSExprArray toSExprIdent dp :: toSExprIdent id :: toSExprNat n :: nil)
-  | mpDot mp' id => listS (atomS (litC "MPdot") :: toSExprModPath mp' :: toSExprIdent id :: nil)
+    listS (atomS ("MPbound") :: toSExprArray toSExprIdent dp :: toSExprIdent id :: toSExprNat n :: nil)
+  | mpDot mp' id => listS (atomS ("MPdot") :: toSExprModPath mp' :: toSExprIdent id :: nil)
 
 \func toSExprKername (k : Kername) : Sexpr =>
   listS (toSExprModPath k.kerModPath :: toSExprIdent k.kerName :: nil)
 
 \func toSExprInductiveId (ind : InductiveId) : Sexpr =>
-  listS (atomS (litC "inductive") :: toSExprKername ind.indMutualBlock :: toSExprNat ind.indIdx :: nil)
+  listS (atomS ("inductive") :: toSExprKername ind.indMutualBlock :: toSExprNat ind.indIdx :: nil)
 
 \func toSExprProjectionInfo (p : ProjectionInfo) : Sexpr =>
-  listS (atomS (litC "projection") :: toSExprInductiveId p.projIndType
+  listS (atomS ("projection") :: toSExprInductiveId p.projIndType
                                         :: toSExprNat p.projParamCount :: toSExprNat p.projFieldIdx :: nil)
 
 \func toSExprPrimTag (t : PrimTag) : Sexpr \elim t
-  | primInt => atomS (litC "primInt")
+  | primInt => atomS ("primInt")
 
 -- Lean's Serialize.lean quotes the BitVec 63 payload as a decimal string, but
 -- that's specific to Lean's own serializer; Peregrine's native Ceres-based
@@ -141,32 +139,32 @@
 -- ---------------------------------------------------------------------------
 
 \func toSExprLBTerm (t : LBTerm) : Sexpr \elim t
-  | box => atomS (litC "tBox")
-  | bvar n => listS (atomS (litC "tRel") :: toSExprNat n :: nil)
-  | fvar _ => atomS (litC "tVar_UNREACHABLE")     -- Lean: `unreachable!` -- should never occur post de-Bruijn conversion
-  | lambda na body => listS (atomS (litC "tLambda") :: toSExprBinderName na :: toSExprLBTerm body :: nil)
+  | box => atomS ("tBox")
+  | bvar n => listS (atomS ("tRel") :: toSExprNat n :: nil)
+  | fvar _ => atomS ("tVar_UNREACHABLE")     -- Lean: `unreachable!` -- should never occur post de-Bruijn conversion
+  | lambda na body => listS (atomS ("tLambda") :: toSExprBinderName na :: toSExprLBTerm body :: nil)
   | letIn na val body =>
-    listS (atomS (litC "tLetIn") :: toSExprBinderName na :: toSExprLBTerm val :: toSExprLBTerm body :: nil)
-  | app u v => listS (atomS (litC "tApp") :: toSExprLBTerm u :: toSExprLBTerm v :: nil)
-  | const k => listS (atomS (litC "tConst") :: toSExprKername k :: nil)
+    listS (atomS ("tLetIn") :: toSExprBinderName na :: toSExprLBTerm val :: toSExprLBTerm body :: nil)
+  | app u v => listS (atomS ("tApp") :: toSExprLBTerm u :: toSExprLBTerm v :: nil)
+  | const k => listS (atomS ("tConst") :: toSExprKername k :: nil)
   | construct ind n args =>
-    wrapTApp (listS (atomS (litC "tConstruct") :: toSExprInductiveId ind :: toSExprNat n :: listS nil :: nil))
+    wrapTApp (listS (atomS ("tConstruct") :: toSExprInductiveId ind :: toSExprNat n :: listS nil :: nil))
         (\new Array Sexpr args.len (\lam i => toSExprLBTerm (args i)))
   | case ind npars scrut brs =>
-    listS (atomS (litC "tCase")
+    listS (atomS ("tCase")
       :: listS (toSExprInductiveId ind :: toSExprNat npars :: nil)
            :: toSExprLBTerm scrut
                 :: listS (\new Array Sexpr brs.len (\lam i =>
         listS (toSExprArray toSExprBinderName (brs i).1 :: toSExprLBTerm (brs i).2 :: nil)))
                      :: nil)
-  | proj p c => listS (atomS (litC "tProj") :: toSExprProjectionInfo p :: toSExprLBTerm c :: nil)
+  | proj p c => listS (atomS ("tProj") :: toSExprProjectionInfo p :: toSExprLBTerm c :: nil)
   | fix defs idx =>
-    listS (atomS (litC "tFix")
+    listS (atomS ("tFix")
       :: listS (\new Array Sexpr defs.len (\lam j =>
-        listS (atomS (litC "def") :: toSExprBinderName (defs j).defName
+        listS (atomS ("def") :: toSExprBinderName (defs j).defName
                                        :: toSExprLBTerm (defs j).defBody :: toSExprNat (defs j).principalArgIdx :: nil)))
            :: toSExprNat idx :: nil)
-  | prim pv => listS (atomS (litC "tPrim") :: toSExprPrimVal pv :: nil)
+  | prim pv => listS (atomS ("tPrim") :: toSExprPrimVal pv :: nil)
 
 
 -- ---------------------------------------------------------------------------
@@ -175,37 +173,37 @@
 -- ---------------------------------------------------------------------------
 
 \func toSExprConstructorBody (c : ConstructorBody) : Sexpr =>
-  listS (atomS (litC "constructor_body") :: toSExprIdent c.cstrName :: toSExprNat c.cstrNargs :: nil)
+  listS (atomS ("constructor_body") :: toSExprIdent c.cstrName :: toSExprNat c.cstrNargs :: nil)
 
 \func toSExprProjectionBody (p : ProjectionBody) : Sexpr =>
-  listS (atomS (litC "projection_body") :: toSExprIdent p.projBodyName :: nil)
+  listS (atomS ("projection_body") :: toSExprIdent p.projBodyName :: nil)
 
 \func toSExprAllowedEliminations (a : AllowedEliminations) : Sexpr \elim a
-  | IntoSProp => atomS (litC "IntoSProp")
-  | IntoPropSProp => atomS (litC "IntoPropSProp")
-  | IntoSetPropSProp => atomS (litC "IntoSetPropSProp")
-  | IntoAny => atomS (litC "IntoAny")
+  | IntoSProp => atomS ("IntoSProp")
+  | IntoPropSProp => atomS ("IntoPropSProp")
+  | IntoSetPropSProp => atomS ("IntoSetPropSProp")
+  | IntoAny => atomS ("IntoAny")
 
 \func toSExprOneInductiveBody (o : OneInductiveBody) : Sexpr =>
-  listS (atomS (litC "one_inductive_body") :: toSExprIdent o.indName :: toSExprBool o.indPropositional
+  listS (atomS ("one_inductive_body") :: toSExprIdent o.indName :: toSExprBool o.indPropositional
                                                                           :: toSExprAllowedEliminations o.indKelim :: toSExprArray toSExprConstructorBody o.indCtors
                                                                                                                         :: toSExprArray toSExprProjectionBody o.indProjs :: nil)
 
 \func toSExprRecursivityKind (r : RecursivityKind) : Sexpr \elim r
-  | finite => atomS (litC "Finite")
-  | cofinite => atomS (litC "CoFinite")
-  | bifinite => atomS (litC "BiFinite")
+  | finite => atomS ("Finite")
+  | cofinite => atomS ("CoFinite")
+  | bifinite => atomS ("BiFinite")
 
 \func toSExprMutualInductiveBody (m : MutualInductiveBody) : Sexpr =>
-  listS (atomS (litC "mutual_inductive_body") :: toSExprRecursivityKind m.indFinite :: toSExprNat m.indNpars
+  listS (atomS ("mutual_inductive_body") :: toSExprRecursivityKind m.indFinite :: toSExprNat m.indNpars
                                                                                          :: toSExprArray toSExprOneInductiveBody m.indBodies :: nil)
 
 \func toSExprConstantBody (c : ConstantBody) : Sexpr =>
-  listS (atomS (litC "constant_body") :: toSExprMaybe toSExprLBTerm c.cstBody :: nil)
+  listS (atomS ("constant_body") :: toSExprMaybe toSExprLBTerm c.cstBody :: nil)
 
 \func toSExprGlobalDecl (g : GlobalDecl) : Sexpr \elim g
-  | constantDecl cb => listS (atomS (litC "ConstantDecl") :: toSExprConstantBody cb :: nil)
-  | inductiveDecl mib => listS (atomS (litC "InductiveDecl") :: toSExprMutualInductiveBody mib :: nil)
+  | constantDecl cb => listS (atomS ("ConstantDecl") :: toSExprConstantBody cb :: nil)
+  | inductiveDecl mib => listS (atomS ("InductiveDecl") :: toSExprMutualInductiveBody mib :: nil)
 
 \func toSExprGlobalDeclEntry (p : \Sigma Kername GlobalDecl) : Sexpr =>
   listS (toSExprKername p.1 :: toSExprGlobalDecl p.2 :: nil)
@@ -214,7 +212,7 @@
   toSExprArray toSExprGlobalDeclEntry ds
 
 \func toSExprASTType (a : ASTType) : Sexpr \elim a
-  | untyped ds term => listS (atomS (litC "Untyped") :: toSExprGlobalDeclarations ds :: toSExprMaybe toSExprLBTerm term :: nil)
+  | untyped ds term => listS (atomS ("Untyped") :: toSExprGlobalDeclarations ds :: toSExprMaybe toSExprLBTerm term :: nil)
 
 
 -- ---------------------------------------------------------------------------
@@ -222,27 +220,27 @@
 -- ---------------------------------------------------------------------------
 
 \func toSExprRemappedInductive (r : RemappedInductive) : Sexpr =>
-  listS (atomS (litC "remapped_inductive") :: toSExprIdent r.reIndName
+  listS (atomS ("remapped_inductive") :: toSExprIdent r.reIndName
                                                 :: toSExprArray toSExprIdent r.reIndCtors :: toSExprMaybe toSExprIdent r.reIndMatch :: nil)
 
 \func toSExprExtractInductive (e : ExtractInductive) : Sexpr =>
-  listS (atomS (litC "extract_inductive") :: toSExprArray toSExprKername e.extractCstrs :: toSExprKername e.extractElim :: nil)
+  listS (atomS ("extract_inductive") :: toSExprArray toSExprKername e.extractCstrs :: toSExprKername e.extractElim :: nil)
 
 \func toSExprRemapInductive (r : RemapInductive) : Sexpr \elim r
-  | knIndRemap re => listS (atomS (litC "KnIndRemap") :: toSExprExtractInductive re :: nil)
-  | stringIndRemap re => listS (atomS (litC "StringIndRemap") :: toSExprRemappedInductive re :: nil)
+  | knIndRemap re => listS (atomS ("KnIndRemap") :: toSExprExtractInductive re :: nil)
+  | stringIndRemap re => listS (atomS ("StringIndRemap") :: toSExprRemappedInductive re :: nil)
 
 \func toSExprInductiveMapping (m : InductiveMapping) : Sexpr =>
-  listS (atomS (litC "inductive_mapping") :: toSExprKername m.indMapKn
+  listS (atomS ("inductive_mapping") :: toSExprKername m.indMapKn
                                                :: toSExprIdent m.indMapS :: toSExprArray toSExprNat m.indMapN :: nil)
 
 \func toSExprRemappedConstant (r : RemappedConstant) : Sexpr =>
-  listS (atomS (litC "remapped_constant") :: toSExprMaybe toSExprIdent r.reConstExt
+  listS (atomS ("remapped_constant") :: toSExprMaybe toSExprIdent r.reConstExt
                                                :: toSExprNat r.reConstArity :: toSExprBool r.reConstGC :: toSExprBool r.reConstInl
                                                                                                             :: toSExprIdent r.reConstS :: nil)
 
 \func toSExprAttributesConfig (a : AttributesConfig) : Sexpr =>
-  listS (atomS (litC "attributes_config")
+  listS (atomS ("attributes_config")
     :: toSExprArray toSExprKername a.acInlinings
          :: toSExprArray (\lam p => listS (toSExprKername p.1 :: toSExprRemappedConstant p.2 :: nil)) a.acConstRemappings
               :: toSExprArray (\lam p => listS (toSExprInductiveId p.1 :: toSExprRemapInductive p.2 :: nil)) a.acIndRemappings
@@ -260,8 +258,8 @@
 -- LBProgram always has an entry term; ASTType's is optional (a bare library
 -- has none) -- bridge by wrapping LBProgram's term in `just`.
 \func LambdaBoxToSrting (p : LBProgram) =>
-  sexprToCode (toSExprASTType (untyped p.1 (just p.2)))
+  sexprToString (toSExprASTType (untyped p.1 (just p.2)))
 
 -- Renders a Peregrine `--attributes` config file (axiom realizations etc.).
-\func AttributesToString (a : AttributesConfig) : Code =>
-  sexprToCode (toSExprAttributesConfig a)
+\func AttributesToString (a : AttributesConfig) : String =>
+  sexprToString (toSExprAttributesConfig a)

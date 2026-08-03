@@ -1,7 +1,7 @@
 \import Data.Bool
 \import LambdaBox
-\import ToJava
 \import Data.Maybe
+\import Data.String
 
 -- =============================================================================
 -- Example λ□ program: Peano naturals + addition (recursion on the first
@@ -60,14 +60,5 @@
 
 \func addProgram : LBProgram => (decls, mainTerm)
 
--- Typechecking this definition prints the generated Java source to the
--- console (via ToJava's printProgram -> the printArr meta).
-
-\import ToJava
-\import Debug.Meta
-
---\func main => printArr (compileProgram addProgram)
-
-\import Serialize
-\func ser => printArr (LambdaBoxToSrting addProgram)
-
+-- Printing the generated Java source lives in ExamplePrint.ard: it needs a
+-- much larger stack than checking these definitions does.

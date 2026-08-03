@@ -1,0 +1,30 @@
+\import Debug
+\import Example (testProgram)
+\import ExampleMatMul (matMulAttrsC, matMulAttrsOCaml, matMulProgram)
+\import ExamplePeano (addProgram)
+\import Serialize
+\import ToJava
+
+-- =============================================================================
+-- Printing entry points for the example programs.
+--
+-- Typechecking a definition here prints its result (`putStrLn` runs during
+-- typechecking). Kept OUT of the Example*.ard modules on purpose: evaluating a
+-- whole generated program needs a much bigger stack (the Arend CLI has to be
+-- run with e.g. `-Xss1g`), while the example *definitions* themselves
+-- typecheck with the default stack -- so the two can be checked independently.
+--
+-- Only the example entry points are imported by name, since the modules
+-- otherwise share definition names (`decls`, `mainTerm`, ...).
+-- =============================================================================
+
+\func exampleJava => putStrLn (compileProgram testProgram)
+\func exampleSexpr => putStrLn (LambdaBoxToSrting testProgram)
+
+\func peanoJava => putStrLn (compileProgram addProgram)
+\func peanoSexpr => putStrLn (LambdaBoxToSrting addProgram)
+
+\func matMulJava => putStrLn (compileProgram matMulProgram)
+\func matMulSexpr => putStrLn (LambdaBoxToSrting matMulProgram)
+\func matMulAttrsCText => putStrLn (AttributesToString matMulAttrsC)
+\func matMulAttrsOCamlText => putStrLn (AttributesToString matMulAttrsOCaml)
