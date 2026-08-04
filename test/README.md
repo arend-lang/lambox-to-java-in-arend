@@ -56,16 +56,40 @@ print on subsequent runs.
   implementation, which is not released yet (expected in 1.13).
 * A JDK (`JAVA`, `JAVAC`); `JAVA_STACK=-Xss1g` is required, since evaluating a
   whole generated program during typechecking is stack-hungry.
-* The fixed Java runtime `Rt.java` (`Fn`, `Data`, `BOX`) from
+* The fixed Java runtime `Rt.java` (`Fn`, `Data`, `BOX` and the primitive int
+  ops `PRIM_{ADD,MUL,SUB,EQB}_{INT,LONG}`) from
   `JAVA_RUNTIME_DIR` (`lambox-to-java/runtime`). It is hand-written, not
   generated: `build-java.sh` copies it into the work dir and compiles it
-  together with the generated `Prog.java`.
+  together with the generated `Prog.java`. The primitive ops realize matmul's
+  four arity-2 λ□ axioms — the Java counterpart of remapping them onto
+  CertiRocq's `prim_int63_*` via peregrine's `--attributes`; the mapping lives
+  in `javaAxioms` in `ToJava.ard`.
 * For the C/OCaml backends: `PEREGRINE`, the CertiRocq runtime
   (`CERTIROCQ_RT`, providing `gc_stack.c` and `prim_int63.c`), `gcc`,
   `ocamlopt` and `malfunction` (the latter comes from the opam switch
   Peregrine was built in; `config.sh` puts `$OPAM_SWITCH_BIN` on `PATH`).
 
 Missing tools are reported by `require_tool` with a clear message.
+
+## Integer representation of the Java backend
+
+`JAVA_INT` picks how λ□ primitive ints are represented in the generated Java
+(`JavaIntRepr` in `ToJava.ard`); both variants use the same `Rt.java`:
+
+    test/run-case.sh matmul java               # JAVA_INT=bigint (default)
+    JAVA_INT=long test/run-case.sh matmul java
+
+* `bigint` — `java.math.BigInteger` literals and `Rt.PRIM_*_INT`: unbounded,
+  never overflows, but boxed arithmetic and no wraparound.
+* `long` — `Long.valueOf(..L)` literals and `Rt.PRIM_*_LONG`, i.e. Java's
+  built-in 64-bit integers: much faster (matmul: ~1.1s vs ~8.1s run time), wraps
+  at 2^64 — whereas λ□ ints are 63-bit, so neither choice matches the C/OCaml
+  int63 runtimes exactly.
+
+A case declares its Java producer as `...:<name>Java$JAVA_DEF_SUFFIX`, and
+`config.sh` turns `JAVA_INT` into that suffix (`""` / `"Long"`), so the switch
+applies to every case without touching any backend script. Both variants build
+into the same `work/<case>/java` dir, i.e. the last run wins.
 
 ## Cases
 

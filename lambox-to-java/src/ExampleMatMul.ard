@@ -75,7 +75,10 @@
 -- for Peregrine's C backend they are remapped (via `matMulAttrs` below /
 -- out/matmul.attr) onto the CertiRocq runtime's arity-2 prim_int63_add /
 -- prim_int63_mul / prim_int63_sub / prim_int63_eqb (prim_int63.{h,c}); the
--- Java backend (ToJava.ard) would emit java.math.BigInteger equivalents.
+-- Java backend realizes them as the curried constants
+-- Rt.PRIM_{ADD,MUL,SUB,EQB}_{INT,LONG} in runtime/Rt.java, wired up by the
+-- `javaAxioms` table in ToJava.ard (INT = BigInteger, LONG = Java's built-in
+-- 64-bit int; picked by ToJava's JavaIntRepr).
 -- All four are ARITY-2 on purpose: the shipped C runtime has no arity-1 ops,
 -- so "sub1 x" is expressed as `sub x 1` and "isZero x" as `eqb x 0`.
 -- eqb's result ABI matches BoolBlock below: mk_bool encodes false as unboxed

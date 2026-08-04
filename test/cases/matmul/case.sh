@@ -7,7 +7,9 @@
 # sub,eqb}, for OCaml on the hand-written Prim_int63 wrapper module.
 
 BACKENDS="java c ocaml"
-JAVA_PRODUCER="extract-arend ExamplePrint:matMulJava"
+# $JAVA_DEF_SUFFIX comes from config.sh's JAVA_INT: empty for the BigInteger
+# program, "Long" for the one using Java's built-in 64-bit integers.
+JAVA_PRODUCER="extract-arend ExamplePrint:matMulJava$JAVA_DEF_SUFFIX"
 AST_PRODUCER="extract-arend ExamplePrint:matMulSexpr"
 ATTR_C_PRODUCER="extract-arend ExamplePrint:matMulAttrsCText"
 ATTR_OCAML_PRODUCER="extract-arend ExamplePrint:matMulAttrsOCamlText"

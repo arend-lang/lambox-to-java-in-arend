@@ -53,4 +53,82 @@ public final class Rt {
   // A compiled closure can't show anything structural, so it gets a fixed
   // placeholder instead of a raw hashcode.
   public static final Object BOX = new Object();
+
+  // --- Primitive integer ops -------------------------------------------------
+  //
+  // Realization of the arity-2 λ□ axioms `prim_add_int`, `prim_mul_int`,
+  // `prim_sub_int` and `prim_eqb_int` (see ExampleMatMul.ard). The C/OCaml
+  // backends get these by remapping the axioms onto CertiRocq's
+  // prim_int63_add/mul/sub/eqb via peregrine's `--attributes`; for Java the
+  // generator emits a reference to the constants below (axiom table in
+  // ToJava.ard) instead of a throwing stub.
+  //
+  // Both arguments are taken one at a time, since generated code is fully
+  // curried: `((Fn)((Fn)PRIM_ADD_INT).apply(a)).apply(b)`.
+  //
+  // There are TWO families, one per int representation the generator can pick
+  // (`JavaIntRepr` in ToJava.ard) — a program uses exactly one of them, and its
+  // `prim` literals are of the matching type:
+  //   * `PRIM_*_INT`  — java.math.BigInteger values: unbounded, never overflow,
+  //     but boxed arithmetic and NO wraparound.
+  //   * `PRIM_*_LONG` — java.lang.Long values, i.e. Java's built-in integers:
+  //     much faster, wrap — but at 2^64, whereas λ□ ints are 63-bit.
+  // Neither matches the C/OCaml int63 runtimes exactly (known, separately
+  // tracked mismatch); they agree as long as values stay well below 2^62.
+  private static java.math.BigInteger num(Object x) { return (java.math.BigInteger) x; }
+
+  private static long lng(Object x) { return ((Long) x).longValue(); }
+
+  // eqb's result ABI: the two-constructor Bool inductive with no fields,
+  // false = tag 0, true = tag 1 (matching the declared constructor order).
+  public static final Data FALSE = new Data(0, new Object[]{});
+  public static final Data TRUE = new Data(1, new Object[]{});
+
+  public static final Fn PRIM_ADD_INT = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return num(x).add(num(y)); } };
+    }
+  };
+
+  public static final Fn PRIM_MUL_INT = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return num(x).multiply(num(y)); } };
+    }
+  };
+
+  public static final Fn PRIM_SUB_INT = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return num(x).subtract(num(y)); } };
+    }
+  };
+
+  public static final Fn PRIM_EQB_INT = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return num(x).equals(num(y)) ? TRUE : FALSE; } };
+    }
+  };
+
+  public static final Fn PRIM_ADD_LONG = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return Long.valueOf(lng(x) + lng(y)); } };
+    }
+  };
+
+  public static final Fn PRIM_MUL_LONG = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return Long.valueOf(lng(x) * lng(y)); } };
+    }
+  };
+
+  public static final Fn PRIM_SUB_LONG = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return Long.valueOf(lng(x) - lng(y)); } };
+    }
+  };
+
+  public static final Fn PRIM_EQB_LONG = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return lng(x) == lng(y) ? TRUE : FALSE; } };
+    }
+  };
 }

@@ -19,9 +19,21 @@ ROOT="$(cd "$TEST_DIR/.." && pwd)"
 : "${JAVAC:=${JAVA}c}"
 # Evaluating a whole generated program during typechecking needs a big stack.
 : "${JAVA_STACK:=-Xss1g}"
-# The fixed Java runtime (`Rt.java`: Fn, Data, BOX) is hand-written, not
+# The fixed Java runtime (`Rt.java`: Fn, Data, BOX, PRIM_*) is hand-written, not
 # generated; it is compiled next to every generated `Prog.java`.
 : "${JAVA_RUNTIME_DIR:=$AREND_PROJECT/runtime}"
+# Representation of λ□ primitive ints in the generated Java (`JavaIntRepr` in
+# ToJava.ard): `bigint` = java.math.BigInteger (unbounded, no wraparound),
+# `long` = Java's built-in 64-bit integer (faster, wraps at 2^64). It selects
+# the print-definition variant a case asks for, so
+#   JAVA_INT=long test/run-case.sh matmul java
+# builds the same program with `Long` arithmetic instead.
+: "${JAVA_INT:=bigint}"
+case $JAVA_INT in
+  bigint) JAVA_DEF_SUFFIX="" ;;
+  long)   JAVA_DEF_SUFFIX="Long" ;;
+  *)      die "JAVA_INT must be 'bigint' or 'long', got: $JAVA_INT" ;;
+esac
 
 # --- Peregrine / CertiRocq (C and OCaml backends) ---------------------------
 : "${PEREGRINE:=$HOME/peregrine-tool/_build/install/default/bin/peregrine}"
