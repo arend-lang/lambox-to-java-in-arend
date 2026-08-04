@@ -83,6 +83,13 @@
 -- so "sub1 x" is expressed as `sub x 1` and "isZero x" as `eqb x 0`.
 -- eqb's result ABI matches BoolBlock below: mk_bool encodes false as unboxed
 -- ctor 0 and true as ctor 1, exactly our declared constructor order.
+--
+-- NOTE (int63 mismatch): the C/OCaml realizations are genuine 63-bit ops and
+-- wrap mod 2^63 (MetaRocq's prim_model for primInt is PrimInt63.int, cf.
+-- LambdaBox.ard's PrimModel comment), while ours are unbounded (BigInteger) or
+-- 64-bit signed (Long). This example never comes close: the result is
+-- 130^3 = 2197000, so all backends agree. See RESEARCH_AND_PLAN.md for the
+-- planned int63 mode.
 -- ---------------------------------------------------------------------------
 
 \func primAddRef  : LBTerm => const (\new Kername (mpFile nil) "prim_add_int")

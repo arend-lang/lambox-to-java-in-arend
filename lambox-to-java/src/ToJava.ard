@@ -39,13 +39,30 @@
 
 \func rt : String => runtimeClass ++ "."
 
--- Representation of λ□ primitive ints in the generated Java. λ□ ints are
--- 63-bit (`BitVec 63` / Rocq's `PrimInt63`), which no Java type matches
--- exactly, so both choices are approximations and the caller picks one:
+-- Representation of λ□ primitive ints in the generated Java.
+--
+-- KNOWN MISMATCH (documented, not fixed). A λ□ `prim (primInt, _)` is a 63-bit
+-- machine integer with cyclic (mod 2^63) arithmetic -- MetaRocq's
+-- erasure/theories/EPrimitive.v has `primIntModel (i : PrimInt63.int)`,
+-- lean-to-lambdabox has `PrimModel .primInt := BitVec 63`, and the Rocq refman
+-- ("Primitive objects / Primitive integers") specifies the width plus the
+-- unsigned/signed views `Uint63`/`Sint63`. No Java type matches that, and our
+-- own AST does not either (LambdaBox.ard's `PrimModel primInt => Int` is
+-- unbounded). So both choices below are approximations, and the caller picks:
 --   * `intBigInteger` -- java.math.BigInteger: unbounded, never overflows, but
---     boxed arithmetic and NO wraparound (unlike the C/OCaml int63 runtimes).
+--     boxed arithmetic and NO wraparound. Matches OUR AST's `Int`, not the
+--     source's int63 nor the C/OCaml int63 runtimes.
 --   * `intLong`       -- java.lang.Long: Java's built-in 64-bit integer, much
---     faster, wraps -- but at 2^64, not 2^63 as the source semantics demand.
+--     faster, wraps -- but at 2^64, not 2^63 as the source semantics demand,
+--     and signed, whereas `PrimInt63` reduction is unsigned/cyclic.
+-- Both agree with the C backend (CertiRocq's prim_int63_*) and the OCaml one
+-- (unboxed OCaml `int`, cf. ExtrOCamlInt63) only while values stay well below
+-- 2^62, which holds for the current examples.
+-- FUTURE WORK: a third `intInt63` representation whose literals and
+-- `Rt.PRIM_*` ops normalize mod 2^63 (following `Uint63`), which is the only
+-- one that could be proved to agree with λ□'s evaluation relation once that
+-- exists. See LambdaBox.ard's `PrimModel` and RESEARCH_AND_PLAN.md.
+--
 -- Everything below is parameterized by this choice; there is no default hidden
 -- inside the generator (see `compileProgramWith` / `compileProgram`).
 \data JavaIntRepr

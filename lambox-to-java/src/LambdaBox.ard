@@ -14,8 +14,11 @@
 --     build de Bruijn directly during erasure.
 --   * drop `tVar`, `tEvar`, `tCoFix`, `tLazy`, `tForce` (LBTerm does the same):
 --     they are not needed for a strict, non-coinductive `\Set`+IO fragment.
---   * `prim` is simplified: MetaRocq/LBTerm carry primitive ints (BitVec 63);
---     Arend has no fixed-width BitVec, so we model the payload with Prelude `Int`.
+--   * `prim` is simplified: MetaRocq/LBTerm carry 63-bit primitive ints; Arend
+--     has no fixed-width BitVec, so we model the payload with the unbounded
+--     Prelude `Int`.  This is the FIRST of three layers of the known int63
+--     mismatch -- see the `PrimModel` comment below and `JavaIntRepr` in
+--     ToJava.ard.
 
 \import Data.Bool
 \import Data.Maybe
@@ -60,10 +63,36 @@
 -- | primFloat
 -- | primList
 
+-- KNOWN MISMATCH (deliberate, documented, not yet fixed).
+-- Upstream, the payload of a `primInt` is a 63-bit machine integer, by
+-- definition of λ□ and not as a backend limitation:
+--   * MetaRocq, erasure/theories/EPrimitive.v:
+--       `| primIntModel (i : PrimInt63.int) : prim_model primInt`
+--     and `prim_model_of primInt := PrimInt63.int`; the tag set comes from
+--     common/theories/Primitive.v (`primInt | primFloat | primString |
+--     primArray` -- there is no primNat/primZ).
+--       https://metarocq.github.io/html/MetaRocq.Erasure.EPrimitive.html#prim_val
+--       https://github.com/MetaRocq/metarocq/blob/main/erasure/theories/EPrimitive.v
+--   * Rocq refman, "Primitive objects / Primitive integers": the kernel's `int`
+--     is a 63-bit machine integer (unboxed OCaml int, one bit for the GC tag),
+--     with an unsigned view `Uint63` and a signed view `Sint63`; its arithmetic
+--     is cyclic modulo 2^63.
+--       https://rocq-prover.org/doc/master/refman/language/core/primitive.html
+--   * lean-to-lambdabox, LeanToLambdaBox/Basic.lean: `PrimModel .primInt :=
+--     BitVec 63` -- the Lean port agreeing with MetaRocq.
+-- Note this concerns ONLY `tPrim primInt`: Rocq's default numbers (`nat`, `Z`,
+-- `N`) are ordinary inductive types and erase to `construct` applications (cf.
+-- ExamplePeano.ard), never to `prim`; nothing unbounded is silently truncated.
+-- Since Arend has no fixed-width bit vectors, we use the unbounded Prelude
+-- `Int` here, so THIS ENCODING IS WIDER THAN THE SOURCE: values >= 2^63 are
+-- representable and no operation wraps.
+-- FUTURE WORK: either model the payload as `Fin (2^63)` / a `mod 2^63`-normalized
+-- Int (and pin down the signed/unsigned view -- MetaRocq's EWcbvEval and
+-- ExtrOCamlInt63 follow the unsigned/cyclic `Uint63` semantics), or keep this
+-- encoding and state the 2^62-ish range side condition under which all backends
+-- agree.  See ToJava.ard (`JavaIntRepr`) and RESEARCH_AND_PLAN.md.
 \func PrimModel (_ : PrimTag) : \Set0  -- TODO : is this ok to be a \Set ?
   | primInt => Int
--- MetaRocq uses a different prim model
--- https://metarocq.github.io/html/MetaRocq.Erasure.EPrimitive.html#prim_val
 
 \func PrimVal : \Type => \Sigma (t : PrimTag) (PrimModel t)
 

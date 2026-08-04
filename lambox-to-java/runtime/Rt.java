@@ -72,9 +72,20 @@ public final class Rt {
   //   * `PRIM_*_INT`  — java.math.BigInteger values: unbounded, never overflow,
   //     but boxed arithmetic and NO wraparound.
   //   * `PRIM_*_LONG` — java.lang.Long values, i.e. Java's built-in integers:
-  //     much faster, wrap — but at 2^64, whereas λ□ ints are 63-bit.
-  // Neither matches the C/OCaml int63 runtimes exactly (known, separately
-  // tracked mismatch); they agree as long as values stay well below 2^62.
+  //     much faster, wrap — but at 2^64 and signed, whereas λ□ ints are 63-bit
+  //     with unsigned/cyclic (mod 2^63) arithmetic.
+  //
+  // KNOWN MISMATCH (documented, not fixed). λ□'s `tPrim primInt` payload is
+  // int63 by definition of the language: MetaRocq
+  // erasure/theories/EPrimitive.v — `primIntModel (i : PrimInt63.int)`;
+  // lean-to-lambdabox — `PrimModel .primInt := BitVec 63`; Rocq refman
+  // "Primitive objects / Primitive integers" (63-bit machine int, unsigned view
+  // `Uint63`, signed view `Sint63`). Neither family below matches that, nor the
+  // C runtime (CertiRocq prim_int63_add/mul/sub/eqb) or the OCaml one (unboxed
+  // OCaml `int`, cf. ExtrOCamlInt63); they agree as long as values stay well
+  // below 2^62, which holds for the current examples.
+  // FUTURE WORK: a `PRIM_*_INT63` family normalizing mod 2^63 per `Uint63`,
+  // selected by a third `JavaIntRepr` alternative.
   private static java.math.BigInteger num(Object x) { return (java.math.BigInteger) x; }
 
   private static long lng(Object x) { return ((Long) x).longValue(); }

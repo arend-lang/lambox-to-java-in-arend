@@ -83,8 +83,21 @@ Missing tools are reported by `require_tool` with a clear message.
   never overflows, but boxed arithmetic and no wraparound.
 * `long` — `Long.valueOf(..L)` literals and `Rt.PRIM_*_LONG`, i.e. Java's
   built-in 64-bit integers: much faster (matmul: ~1.1s vs ~8.1s run time), wraps
-  at 2^64 — whereas λ□ ints are 63-bit, so neither choice matches the C/OCaml
-  int63 runtimes exactly.
+  at 2^64 and signed.
+
+Neither matches the source semantics: a λ□ `prim (primInt, _)` is a 63-bit
+machine integer with cyclic (mod 2^63) arithmetic — MetaRocq
+`erasure/theories/EPrimitive.v` (`primIntModel (i : PrimInt63.int)`) and the
+[Rocq refman on primitive integers](https://rocq-prover.org/doc/master/refman/language/core/primitive.html)
+(unsigned view `Uint63`, signed view `Sint63`) — which is what the C backend
+(CertiRocq `prim_int63_{add,mul,sub,eqb}`) and the OCaml backend (unboxed OCaml
+`int`, cf. `ExtrOCamlInt63`) implement. Our own AST is unbounded too
+(`LambdaBox.ard`'s `PrimModel primInt => Int`), so the three layers agree only
+while values stay well below 2^62 — true for all current cases. A future
+`JAVA_INT=int63` (backed by a `Rt.PRIM_*_INT63` family normalizing mod 2^63) is
+the planned fix; see the int63-mismatch section of `RESEARCH_AND_PLAN.md`. Until
+then, comparing the `java` output against `c`/`ocaml` for a case whose values
+exceed 2^62 is expected to differ.
 
 A case declares its Java producer as `...:<name>Java$JAVA_DEF_SUFFIX`, and
 `config.sh` turns `JAVA_INT` into that suffix (`""` / `"Long"`), so the switch

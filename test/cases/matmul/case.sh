@@ -19,4 +19,7 @@ OCAML_DRIVER=matmul_main.ml
 # it and matmul.mli is its hand-written interface, so the three must agree.
 OCAML_MODULE=matmul
 OCAML_EXTRA="prim_int63.mli prim_int63.ml matmul.mli"
-NOTE="expected: 2197000 (= 130^3)"
+# All three backends agree here only because 130^3 stays far below 2^62: C/OCaml
+# implement genuine int63 (wrapping mod 2^63), the Java backend BigInteger or
+# 64-bit Long. See "Integer representation of the Java backend" in ../../README.md.
+NOTE="expected: 2197000 (= 130^3); backends agree only well below 2^62 (int63 mismatch)"
