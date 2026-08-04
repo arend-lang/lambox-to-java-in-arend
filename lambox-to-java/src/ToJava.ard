@@ -25,7 +25,17 @@
 -- Design (unchanged): untyped -> Java `Object`; closures = anonymous inner
 -- classes (no invokedynamic); constructors -> `Data{int tag; Object[] fields}`;
 -- constants -> zero-arg static methods; fix -> mutable `Fn[]` knot-tying.
+--
+-- The fixed part of that encoding (`Fn`, `Data` + its `toString`, `BOX`) is NOT
+-- generated: it lives in the hand-written `runtime/Rt.java` shipped alongside
+-- the output, and generated code refers to it through `rt` below.
 -- =============================================================================
+
+-- Name of the runtime class (see runtime/Rt.java); `rt` is the qualifier used
+-- in every emitted reference, so renaming the class is a one-line change.
+\func runtimeClass : String => "Rt"
+
+\func rt : String => runtimeClass ++ "."
 
 -- Compilation result: (statements, value-expression), both plain String.
 \func Out : \Type => \Sigma String String
@@ -86,7 +96,7 @@
 -- Core compiler. `path` uniquely identifies this node; binder names and child
 -- paths are derived from it, so no state threading is needed.
 \func compileExpr (env : Array String) (path : String) (t : LBTerm) : Out \elim t
-  | box => ("", "Prog.BOX")
+  | box => ("", rt ++ "BOX")
 
   | bvar n => ("", nthName n env)
 
@@ -99,12 +109,12 @@
   | app f a =>
     \let | of => compileExpr env ("F" ++ path) f
          | oa => compileExpr env ("A" ++ path) a
-    \in (of.1 ++ oa.1, "((Prog.Fn)(" ++ of.2 ++ ")).apply(" ++ oa.2 ++ ")")
+    \in (of.1 ++ oa.1, "((" ++ rt ++ "Fn)(" ++ of.2 ++ ")).apply(" ++ oa.2 ++ ")")
 
   | lambda _ body =>
     \let | pv => "p" ++ path
          | ob => compileExpr (pv :: env) ("L" ++ path) body
-    \in ("", "new Prog.Fn(){ public Object apply(Object " ++ pv ++ "){ " ++ ob.1 ++ " return " ++ ob.2 ++ "; } }")
+    \in ("", "new " ++ rt ++ "Fn(){ public Object apply(Object " ++ pv ++ "){ " ++ ob.1 ++ " return " ++ ob.2 ++ "; } }")
 
   | letIn _ value body =>
     \let | ov => compileExpr env ("V" ++ path) value
@@ -116,7 +126,7 @@
   | construct _ cidx args =>
     \let | results => \new Array Out args.len (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
     \in (concatStmts results,
-         "new Prog.Data(" ++ natToStr cidx ++ ", new Object[]{ " ++ joinExprs results ++ " })")
+         "new " ++ rt ++ "Data(" ++ natToStr cidx ++ ", new Object[]{ " ++ joinExprs results ++ " })")
 
   -- case: switch on the scrutinee's tag; each branch binds fields[npars ..] then
   -- evaluates its body. We map inline over `brs i`, binding the body by pattern.
@@ -134,7 +144,7 @@
              \in "case " ++ natToStr i ++ ": { " ++ bnd.1 ++ ob.1
                   ++ rv ++ " = " ++ ob.2 ++ "; break; } ")
     \in (os.1
-           ++ "final Prog.Data " ++ dv ++ " = (Prog.Data)(" ++ os.2 ++ "); "
+           ++ "final " ++ rt ++ "Data " ++ dv ++ " = (" ++ rt ++ "Data)(" ++ os.2 ++ "); "
            ++ "Object " ++ rv ++ "; "
            ++ "switch (" ++ dv ++ ".tag) { " ++ concatStr cases
            ++ "default: throw new RuntimeException(\"no matching branch\"); } ",
@@ -143,7 +153,7 @@
   | proj pinfo scrut =>
     \let | os => compileExpr env ("P" ++ path) scrut
     \in (os.1,
-         "((Prog.Data)(" ++ os.2 ++ ")).fields["
+         "((" ++ rt ++ "Data)(" ++ os.2 ++ ")).fields["
            ++ natToStr (pinfo.projParamCount) ++ " + " ++ natToStr (pinfo.projFieldIdx) ++ "]")
 
   -- fix: mutable Fn[] + knot-tying; map inline over `defs j`, projecting the
@@ -154,9 +164,9 @@
          | env' => pushFix arr 0 k env
          | assigns => \new Array String k (\lam j =>
              \let | ob => compileExpr env' ("y" ++ natToStr j ++ path) (defs j).defBody
-             \in ob.1 ++ arr ++ "[" ++ natToStr j ++ "] = (Prog.Fn)(" ++ ob.2 ++ "); "
+             \in ob.1 ++ arr ++ "[" ++ natToStr j ++ "] = (" ++ rt ++ "Fn)(" ++ ob.2 ++ "); "
          )
-    \in ("final Prog.Fn[] " ++ arr ++ " = new Prog.Fn[" ++ natToStr k ++ "]; " ++ concatStr assigns,
+    \in ("final " ++ rt ++ "Fn[] " ++ arr ++ " = new " ++ rt ++ "Fn[" ++ natToStr k ++ "]; " ++ concatStr assigns,
          arr ++ "[" ++ natToStr idx ++ "]")
 
 
@@ -186,41 +196,11 @@
   \in "  public static Object __main(){ " ++ o.1 ++ " return " ++ o.2 ++ "; }\n" ++
      "  public static void main(String[] args){ System.out.println(__main()); }\n"
 
--- `Fn`/`Data` toString overrides: purely for making printed program output
--- human-readable (e.g. inspecting `System.out.println(__main())`). Data's is a
--- recursive, indented `tag(\n  field,\n  field\n)` tree (flat leaves like
--- `0` print with no parens). Kept to plain loops/casts (no lambdas/streams/
--- pattern-switch) per the classic-bytecode-only codegen style used everywhere
--- else here. Fn can't show anything structural (it's a compiled closure), so
--- it just gets a fixed placeholder instead of a raw hashcode.
+-- Only the program-specific class is generated; `Fn`, `Data` (with its
+-- human-readable `toString`) and `BOX` come from the hand-written runtime class
+-- `runtime/Rt.java`, which must be compiled together with this output.
 \func compileProgram (p : LBProgram) : String =>
   "public final class Prog {\n" ++
-  "  public interface Fn {\n" ++
-  "    Object apply(Object x);\n" ++
-  "  }\n" ++
-  "  public static final class Data {\n" ++
-  "    public final int tag;\n" ++
-  "    public final Object[] fields;\n" ++
-  "    public Data(int tag, Object[] fields){ this.tag = tag; this.fields = fields; }\n" ++
-  "    @Override public String toString(){ return toString(0); }\n" ++
-  "    public String toString(int indent){\n" ++
-  "      StringBuilder sb = new StringBuilder();\n" ++
-  "      sb.append(tag);\n" ++
-  "      if (fields.length == 0) return sb.toString();\n" ++
-  "      sb.append(\"(\\n\");\n" ++
-  "      for (int i = 0; i < fields.length; i++) {\n" ++
-  "        for (int j = 0; j < indent + 1; j++) sb.append(\"  \");\n" ++
-  "        Object f = fields[i];\n" ++
-  "        if (f instanceof Data) { sb.append(((Data) f).toString(indent + 1)); } else { sb.append(String.valueOf(f)); }\n" ++
-  "        if (i < fields.length - 1) sb.append(\",\");\n" ++
-  "        sb.append(\"\\n\");\n" ++
-  "      }\n" ++
-  "      for (int j = 0; j < indent; j++) sb.append(\"  \");\n" ++
-  "      sb.append(\")\");\n" ++
-  "      return sb.toString();\n" ++
-  "    }\n" ++
-  "  }\n" ++
-  "  public static final Object BOX = new Object();\n" ++
   compileDecls p.1 ++ compileMain p.2 ++ "}\n"
 
 -- Print a generated program with `putStrLn` (Data.String -> console).

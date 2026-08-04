@@ -14,7 +14,7 @@ One script per verb; scripts call scripts, no `case`/`if` dispatch tables.
     lib/log.sh          info / warn / die (everything to stderr)
     lib/timing.sh       timed <case> <backend> <stage> -- cmd...
     extract-arend.sh    <MODULE:DEF> [outfile] -> the artifact that definition printed
-    build-java.sh       <case>  extract Prog.java + javac
+    build-java.sh       <case>  extract Prog.java + copy Rt.java + javac
     run-java.sh         <case>  build-java.sh + run-timed.sh
     build-c.sh          <case>  extract .ast/.attr + peregrine c + gcc
     run-c.sh            <case>  build-c.sh + run-timed.sh
@@ -56,6 +56,10 @@ print on subsequent runs.
   implementation, which is not released yet (expected in 1.13).
 * A JDK (`JAVA`, `JAVAC`); `JAVA_STACK=-Xss1g` is required, since evaluating a
   whole generated program during typechecking is stack-hungry.
+* The fixed Java runtime `Rt.java` (`Fn`, `Data`, `BOX`) from
+  `JAVA_RUNTIME_DIR` (`lambox-to-java/runtime`). It is hand-written, not
+  generated: `build-java.sh` copies it into the work dir and compiles it
+  together with the generated `Prog.java`.
 * For the C/OCaml backends: `PEREGRINE`, the CertiRocq runtime
   (`CERTIROCQ_RT`, providing `gc_stack.c` and `prim_int63.c`), `gcc`,
   `ocamlopt` and `malfunction` (the latter comes from the opam switch

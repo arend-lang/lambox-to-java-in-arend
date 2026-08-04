@@ -19,6 +19,9 @@ ROOT="$(cd "$TEST_DIR/.." && pwd)"
 : "${JAVAC:=${JAVA}c}"
 # Evaluating a whole generated program during typechecking needs a big stack.
 : "${JAVA_STACK:=-Xss1g}"
+# The fixed Java runtime (`Rt.java`: Fn, Data, BOX) is hand-written, not
+# generated; it is compiled next to every generated `Prog.java`.
+: "${JAVA_RUNTIME_DIR:=$AREND_PROJECT/runtime}"
 
 # --- Peregrine / CertiRocq (C and OCaml backends) ---------------------------
 : "${PEREGRINE:=$HOME/peregrine-tool/_build/install/default/bin/peregrine}"
