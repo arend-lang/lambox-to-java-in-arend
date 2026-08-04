@@ -56,8 +56,9 @@ print on subsequent runs.
   implementation, which is not released yet (expected in 1.13).
 * A JDK (`JAVA`, `JAVAC`); `JAVA_STACK=-Xss1g` is required, since evaluating a
   whole generated program during typechecking is stack-hungry.
-* The fixed Java runtime `Rt.java` (`Fn`, `Data`, `BOX` and the primitive int
-  ops `PRIM_{ADD,MUL,SUB,EQB}_{INT,LONG}`) from
+* The fixed Java runtime `Rt.java` (`Fn`, `Data`, `BOX`, the primitive int
+  ops `PRIM_{ADD,MUL,SUB,EQB}_{INT,LONG}` and the `unbound`/`freeVar` failure
+  helpers for ill-formed λ□ input) from
   `JAVA_RUNTIME_DIR` (`lambox-to-java/runtime`). It is hand-written, not
   generated: `build-java.sh` copies it into the work dir and compiles it
   together with the generated `Prog.java`. The primitive ops realize matmul's

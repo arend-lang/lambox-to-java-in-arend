@@ -54,6 +54,26 @@ public final class Rt {
   // placeholder instead of a raw hashcode.
   public static final Object BOX = new Object();
 
+  // --- Ill-formed input ------------------------------------------------------
+  //
+  // Two λ□ nodes have no Java value: a `bvar` whose de Bruijn index exceeds the
+  // enclosing binders (out of scope) and a `fvar` (locally-nameless free
+  // variable) — a closed program produced by erasure contains neither. The
+  // generator used to emit a commented `null` for them, which then either blew
+  // up far away as a NullPointerException or, worse, propagated silently as a
+  // value; it now emits a call of one of these, so the failure is immediate and
+  // names the offending node (`path` is the generator's structural node id, see
+  // `compileExpr` in ToJava.ard).
+  public static Object unbound(int index, String path) {
+    throw new IllegalStateException(
+      "ill-formed lambda-box: de Bruijn index " + index + " is out of scope (node " + path + ")");
+  }
+
+  public static Object freeVar(String name, String path) {
+    throw new IllegalStateException(
+      "ill-formed lambda-box: free variable \"" + name + "\" has no Java counterpart (node " + path + ")");
+  }
+
   // --- Primitive integer ops -------------------------------------------------
   //
   // Realization of the arity-2 λ□ axioms `prim_add_int`, `prim_mul_int`,

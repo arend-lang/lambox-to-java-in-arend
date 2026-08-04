@@ -107,10 +107,14 @@
 
 -- de Bruijn lookup: env head = index 0. A bound name is a literal prefix
 -- concatenated with the node's `path`.
-\func nthName (n : Nat) (env : Array String) : String \elim n, env
-  | _, nil => "/*UNBOUND*/null"
+-- An index larger than the number of enclosing binders is ill-formed input (a
+-- closed λ□ program has none), so instead of a silent `null` we emit a runtime
+-- call that fails immediately and reports the index and the node.  `n0` is the
+-- original index, kept for the message while `n` counts down.
+\func nthName (n : Nat) (env : Array String) (n0 : Nat) (path : String) : String \elim n, env
+  | _, nil => rt ++ "unbound(" ++ natToStr n0 ++ ", \"" ++ path ++ "\")"
   | 0, x :: _ => x
-  | suc n, _ :: env => nthName n env
+  | suc n, _ :: env => nthName n env n0 path
 
 -- Folds over per-child results. None call compileExpr -> separate SCC.
 \func concatStmts (rs : Array Out) : String \elim rs
@@ -163,9 +167,12 @@
 \func compileExpr (ir : JavaIntRepr) (env : Array String) (path : String) (t : LBTerm) : Out \elim t
   | box => ("", rt ++ "BOX")
 
-  | bvar n => ("", nthName n env)
+  | bvar n => ("", nthName n env n path)
 
-  | fvar _ => ("", "/*FVAR*/null")
+  -- A locally-nameless free variable has no Java counterpart at all (the
+  -- serializer likewise emits `tVar_UNREACHABLE`), so compile it to a throwing
+  -- runtime call naming the variable rather than to a silent `null`.
+  | fvar v => ("", rt ++ "freeVar(\"" ++ v.varName ++ "\", \"" ++ path ++ "\")")
 
   | prim (primInt, i) => ("", primIntLit ir i)
 
