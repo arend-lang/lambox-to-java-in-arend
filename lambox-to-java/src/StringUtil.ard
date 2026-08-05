@@ -10,13 +10,24 @@
 -- String` of literal fragments) declared in `Code.ard`. `String` is a real
 -- record over `Array Byte` now, so that workaround -- the `Code` type, `<+>`,
 -- `litC`, `nilC` -- is gone, and only the genuinely missing pieces are left
--- here: decimal rendering of numbers and a flat concatenation of an array.
+-- here: decimal rendering of numbers, joining/indenting of fragments.
 -- =============================================================================
 
 -- Concatenate an array of String fragments (no separator).
 \func concatStr (xs : Array String) : String \elim xs
   | nil => ""
   | x :: xs => x ++ concatStr xs
+
+-- Concatenate with a separator BETWEEN fragments (none after the last one).
+\func joinStr (sep : String) (xs : Array String) : String \elim xs
+  | nil => ""
+  | x :: nil => x
+  | x :: xs => x ++ sep ++ joinStr sep xs
+
+-- `n` levels of two-space indentation.
+\func indentStr (n : Nat) : String \elim n
+  | 0 => ""
+  | suc n => "  " ++ indentStr n
 
 \func digitLit (d : Nat) : String
   | 0 => "0" | 1 => "1" | 2 => "2" | 3 => "3" | 4 => "4"

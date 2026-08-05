@@ -1,13 +1,23 @@
 \import LambdaBox
+-- Only `map`/`mkArray`/`Big`: importing Data.Array wholesale would shadow
+-- String's `++` with the Array one, so array append is spelled
+-- `Data.Array.++` (once, in `appendStmts` below).
+\import Data.Array (map, mkArray, Big)
 \import Data.Bool
 \import Data.Maybe
 \import Data.String
+\import JavaAst
+\import JavaPrint
 \import Set
 \import StringUtil
 
 -- =============================================================================
--- v2: lambda-box (LBTerm) -> Java source generator, using String (String.ard) as
--- the text type (nowadays just `String`, see String.ard).
+-- lambda-box (LBTerm) -> Java generator.
+--
+-- It builds `JavaAst` values (`JavaAst.ard`), NOT source text: the target
+-- language is defined by that AST, and spelling it out is the sole job of the
+-- trusted printer (`JavaPrint.ard`). `compileProgramWith` composes the two, so
+-- callers still get a `String`.
 --
 -- Termination approach: Arend's foetus/size-change checker rejects a separate
 -- list-typed helper that calls compileExpr (it crosses the LBTerm <-> Array
@@ -16,9 +26,12 @@
 -- INLINE via `xs i` / direct projections like `(brs i).2` (same type, indexed
 -- sub-term / direct projection of the recursion argument) -- never through a
 -- `\case`-bound variable, which loses the structural link the checker needs.
--- The per-child String results are then combined by folds (concatStmts/
--- joinExprs/concatStr) that do NOT call compileExpr, so they terminate on their
--- own.
+-- For the same reason `Data.Array.map` cannot be used HERE: it hides `args i`
+-- behind a closure (verified: the checker rejects it), so the inline arrays are
+-- built with `mkArray {..} {xs.len} (\lam i => .. (xs i))`.
+-- The per-child results are then combined by array operations (`Data.Array`'s
+-- `++`/`Big`/`map`) that do NOT call compileExpr, so they terminate on their
+-- own; `map` is fine there and everywhere outside the recursion.
 --
 -- No fresh-name counter: a structural `path : String` is passed DOWN and
 -- branched per child, so names are unique without left-to-right state
@@ -78,21 +91,29 @@
   -- used in every emitted reference, so retargeting the runtime is one field.
   | runtimeClass : String
   -- A `prim (primInt, i)` literal in this target's representation.
-  | intLit : Int -> String
+  | intLit : Int -> JExpr
   -- Suffix of the runtime's primitive-op constants (`Rt.PRIM_ADD_INT` vs
   -- `Rt.PRIM_ADD_LONG`); the families are otherwise identical in ABI.
   | primOpSuffix : String
 
+-- Qualifier for every runtime reference (`Rt.`), used to build qualified names
+-- for `jCallStatic`/`tClass`; `rtRef` is the same thing as an expression.
 \func rt {t : JavaTarget} : String => runtimeClass ++ "."
+
+\func rtRef {t : JavaTarget} : JExpr => jStatic runtimeClass
+
+\func rtFn {t : JavaTarget} : JType => tClass (rt ++ "Fn")
+
+\func rtData {t : JavaTarget} : JType => tClass (rt ++ "Data")
 
 \func targetBigInteger : JavaTarget \cowith
   | runtimeClass => "Rt"
-  | intLit i => "new java.math.BigInteger(\"" ++ intToStr i ++ "\")"
+  | intLit i => jNew (tClass "java.math.BigInteger") (jStringLit (intToStr i) :: nil)
   | primOpSuffix => "INT"
 
 \func targetLong : JavaTarget \cowith
   | runtimeClass => "Rt"
-  | intLit i => "Long.valueOf(" ++ intToStr i ++ "L)"
+  | intLit i => jCallStatic "Long.valueOf" (jLongLit i :: nil)
   | primOpSuffix => "LONG"
 
 -- Realization of λ□ axioms (constants without a body) in the Java runtime.
@@ -101,8 +122,8 @@
 -- backend instead has this fixed table of axiom name -> runtime expression,
 -- since the runtime it targets (`runtime/Rt.java`) is ours. An axiom listed
 -- here compiles to the runtime constant, everything else to a throwing stub.
-\func javaAxioms {t : JavaTarget} : Array (\Sigma String String) =>
-  \let | op (nm : String) => rt ++ "PRIM_" ++ nm ++ "_" ++ primOpSuffix
+\func javaAxioms {t : JavaTarget} : Array (\Sigma String JExpr) =>
+  \let | op (nm : String) => jField rtRef ("PRIM_" ++ nm ++ "_" ++ primOpSuffix)
   \in ("prim_add_int", op "ADD") ::
       ("prim_mul_int", op "MUL") ::
       ("prim_sub_int", op "SUB") ::
@@ -110,36 +131,38 @@
       nil
 
 -- Lookup by unqualified kername; the primitives live in the root module path.
-\func lookupAxiom (name : String) (tbl : Array (\Sigma String String)) : Maybe String \elim tbl
+\func lookupAxiom (name : String) (tbl : Array (\Sigma String JExpr)) : Maybe JExpr \elim tbl
   | nil => nothing
   | e :: tbl => \case e.1 == name \with {
     | true => just e.2
     | false => lookupAxiom name tbl
   }
 
--- Compilation result: (statements, value-expression), both plain String.
-\func Out : \Type => \Sigma String String
+-- Compilation result: (statements to run first, value expression).
+\func Out : \Type => \Sigma (Array JStmt) JExpr
 
--- de Bruijn lookup: env head = index 0. A bound name is a literal prefix
--- concatenated with the node's `path`.
+-- The environment maps a de Bruijn index to the EXPRESSION that denotes it:
+-- usually a variable (`jVar "p3"`), but a `fix` slot is an array element
+-- (`x3[0]`), which is why this is an `Array JExpr` and not an `Array JIdent`.
+-- Head = index 0.
 -- An index larger than the number of enclosing binders is ill-formed input (a
 -- closed λ□ program has none), so instead of a silent `null` we emit a runtime
 -- call that fails immediately and reports the index and the node.  `n0` is the
 -- original index, kept for the message while `n` counts down.
-\func nthName {t : JavaTarget} (n : Nat) (env : Array String) (n0 : Nat) (path : String) : String \elim n, env
-  | _, nil => rt ++ "unbound(" ++ natToStr n0 ++ ", \"" ++ path ++ "\")"
+\func nthVar {t : JavaTarget} (n : Nat) (env : Array JExpr) (n0 : Nat) (path : String) : JExpr \elim n, env
+  | _, nil => jCallStatic (rt ++ "unbound") (jIntLit n0 :: jStringLit path :: nil)
   | 0, x :: _ => x
-  | suc n, _ :: env => nthName n env n0 path
+  | suc n, _ :: env => nthVar n env n0 path
 
--- Folds over per-child results. None call compileExpr -> separate SCC.
-\func concatStmts (rs : Array Out) : String \elim rs
-  | nil => ""
-  | r :: rs => r.1 ++ concatStmts rs
+-- Array append and flattening of per-child results. Both come from Data.Array;
+-- neither calls compileExpr, so the recursion above stays in its own SCC.
+-- `appendStmts` is the one place `Data.Array.++` is named (see the import).
+\func appendStmts (xs ys : Array JStmt) : Array JStmt => Data.Array.++ xs ys
 
-\func joinExprs (rs : Array Out) : String \elim rs
-  | nil => ""
-  | r :: nil => r.2
-  | r :: rs => r.2 ++ ", " ++ joinExprs rs
+\func concatStmtBlocks (bs : Array (Array JStmt)) : Array JStmt => Big appendStmts nil bs
+
+-- The statements of a sequence of child results, in order.
+\func concatStmts (rs : Array Out) : Array JStmt => concatStmtBlocks (map (\lam r => r.1) rs)
 
 -- Kername -> Java method name. Identifiers arriving from the source are assumed
 -- to be valid Java identifiers already; real sanitization (replacing illegal
@@ -162,61 +185,65 @@
 -- (= npars, to skip inductive parameters). Returns (bind-statements, extended env).
 -- Recurses on the binder array only; never calls compileExpr.
 -- Pushing left-to-right makes the LAST binder de Bruijn index 0 (matches iota_red).
-\func bindFields (dv : String) (fieldIx : Nat) (bs : Array BinderName) (env : Array String) (path : String)
-  : \Sigma String (Array String) \elim bs
-  | nil => ("", env)
+\func bindFields (dv : JExpr) (fieldIx : Nat) (bs : Array BinderName) (env : Array JExpr) (path : String)
+  : \Sigma (Array JStmt) (Array JExpr) \elim bs
+  | nil => (nil, env)
   | _ :: bs =>
     \let | nm => "g" ++ natToStr fieldIx ++ path
-         | st => "final Object " ++ nm ++ " = " ++ dv ++ ".fields[" ++ natToStr fieldIx ++ "]; "
-         | r  => bindFields dv (suc fieldIx) bs (nm :: env) path
-    \in (st ++ r.1, r.2)
+         | st => jLocal true tObject nm (just (jIndex (jField dv "fields") (jIntLit fieldIx)))
+         | r  => bindFields dv (suc fieldIx) bs (jVar nm :: env) path
+    \in (st :: r.1, r.2)
 
--- Push the k fix-slot names arr[0..k-1] onto env; head = arr[k-1] = de Bruijn 0
+-- Push the k fix slots arr[0..k-1] onto env; head = arr[k-1] = de Bruijn 0
 -- (= the LAST mutually-defined function, matching λ□'s fix_subst). No compileExpr.
-\func pushFix (arr : String) (j k : Nat) (env : Array String) : Array String \elim k
+\func pushFix (arr : String) (j k : Nat) (env : Array JExpr) : Array JExpr \elim k
   | 0 => env
-  | suc k => pushFix arr (suc j) k ((arr ++ "[" ++ natToStr j ++ "]") :: env)
+  | suc k => pushFix arr (suc j) k (jIndex (jVar arr) (jIntLit j) :: env)
 
 -- Core compiler. `path` uniquely identifies this node; binder names and child
 -- paths are derived from it, so no state threading is needed.
-\func compileExpr {tgt : JavaTarget} (env : Array String) (path : String) (t : LBTerm) : Out \elim t
-  | box => ("", rt ++ "BOX")
+\func compileExpr {tgt : JavaTarget} (env : Array JExpr) (path : String) (t : LBTerm) : Out \elim t
+  | box => (nil, jField rtRef "BOX")
 
-  | bvar n => ("", nthName n env n path)
+  | bvar n => (nil, nthVar n env n path)
 
   -- A locally-nameless free variable has no Java counterpart at all (the
   -- serializer likewise emits `tVar_UNREACHABLE`), so compile it to a throwing
   -- runtime call naming the variable rather than to a silent `null`.
-  | fvar v => ("", rt ++ "freeVar(\"" ++ v.varName ++ "\", \"" ++ path ++ "\")")
+  | fvar v => (nil, jCallStatic (rt ++ "freeVar") (jStringLit v.varName :: jStringLit path :: nil))
 
-  | prim (primInt, i) => ("", intLit i)
+  | prim (primInt, i) => (nil, intLit i)
 
-  | const k => ("", mangleKername k ++ "()")
+  | const k => (nil, jCallStatic (mangleKername k) nil)
 
   | app f a =>
     \let | of => compileExpr env ("F" ++ path) f
          | oa => compileExpr env ("A" ++ path) a
-    \in (of.1 ++ oa.1, "((" ++ rt ++ "Fn)(" ++ of.2 ++ ")).apply(" ++ oa.2 ++ ")")
+    \in (appendStmts of.1 oa.1, jInvoke (jCast rtFn of.2) "apply" (oa.2 :: nil))
 
   | lambda _ body =>
     \let | pv => "p" ++ path
-         | ob => compileExpr (pv :: env) ("L" ++ path) body
-    \in ("", "new " ++ rt ++ "Fn(){ public Object apply(Object " ++ pv ++ "){ " ++ ob.1 ++ " return " ++ ob.2 ++ "; } }")
+         | ob => compileExpr (jVar pv :: env) ("L" ++ path) body
+    \in (nil, jAnonFn rtFn pv (appendStmts ob.1 (jReturn ob.2 :: nil)))
 
   | letIn _ value body =>
     \let | ov => compileExpr env ("V" ++ path) value
          | lv => "l" ++ path
-         | ob => compileExpr (lv :: env) ("B" ++ path) body
-    \in (ov.1 ++ "final Object " ++ lv ++ " = " ++ ov.2 ++ "; " ++ ob.1, ob.2)
+         | ob => compileExpr (jVar lv :: env) ("B" ++ path) body
+    \in (appendStmts ov.1 (jLocal true tObject lv (just ov.2) :: ob.1), ob.2)
 
   -- construct: recurse inline over the Array of args.
   | construct _ cidx args =>
-    \let | results => \new Array Out args.len (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
+    \let | results => mkArray {Out} {args.len} (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
     \in (concatStmts results,
-         "new " ++ rt ++ "Data(" ++ natToStr cidx ++ ", new Object[]{ " ++ joinExprs results ++ " })")
+         jNew rtData (jIntLit cidx ::
+                      jNewArrayInit tObject (map (\lam r => r.2) results) ::
+                      nil))
 
   -- case: switch on the scrutinee's tag; each branch binds fields[npars ..] then
   -- evaluates its body. We map inline over `brs i`, binding the body by pattern.
+  -- The switch has no value, so the branches assign to a result local `r<path>`,
+  -- which is this node's value expression.
   | case _ npars scrut brs =>
     \let | os => compileExpr env ("S" ++ path) scrut
          | dv => "d" ++ path
@@ -224,24 +251,25 @@
          -- Recurse on the DIRECT projection `(brs i).2`, NOT a `\case`-bound
          -- variable: the checker tracks `(brs i).2 < t` (index into the sub-term
          -- `brs`, then project) but loses that through a `\case` pattern binding.
-         | cases => \new Array String brs.len (\lam i =>
+         | cases => mkArray {\Sigma Nat (Array JStmt)} {brs.len} (\lam i =>
              \let | bp  => "b" ++ natToStr i ++ path
-                  | bnd => bindFields dv npars (brs i).1 env bp
+                  | bnd => bindFields (jVar dv) npars (brs i).1 env bp
                   | ob  => compileExpr bnd.2 bp (brs i).2
-             \in "case " ++ natToStr i ++ ": { " ++ bnd.1 ++ ob.1
-                  ++ rv ++ " = " ++ ob.2 ++ "; break; } ")
-    \in (os.1
-           ++ "final " ++ rt ++ "Data " ++ dv ++ " = (" ++ rt ++ "Data)(" ++ os.2 ++ "); "
-           ++ "Object " ++ rv ++ "; "
-           ++ "switch (" ++ dv ++ ".tag) { " ++ concatStr cases
-           ++ "default: throw new RuntimeException(\"no matching branch\"); } ",
-         rv)
+             \in (i, appendStmts bnd.1 (appendStmts ob.1 (jAssign (jVar rv) ob.2 :: nil))))
+    \in (appendStmts os.1
+           (jLocal true rtData dv (just (jCast rtData os.2)) ::
+            jLocal false tObject rv nothing ::
+            jSwitch (jField (jVar dv) "tag") cases
+              (jThrow (jNew (tClass "RuntimeException") (jStringLit "no matching branch" :: nil)) :: nil) ::
+            nil),
+         jVar rv)
 
+  -- proj: the AST has no arithmetic node, so `npars + idx` is added here.
   | proj pinfo scrut =>
     \let | os => compileExpr env ("P" ++ path) scrut
     \in (os.1,
-         "((" ++ rt ++ "Data)(" ++ os.2 ++ ")).fields["
-           ++ natToStr (pinfo.projParamCount) ++ " + " ++ natToStr (pinfo.projFieldIdx) ++ "]")
+         jIndex (jField (jCast rtData os.2) "fields")
+                (jIntLit (pinfo.projParamCount Nat.+ pinfo.projFieldIdx)))
 
   -- fix: mutable Fn[] + knot-tying; map inline over `defs j`, projecting the
   -- body directly (`(defs j).defBody`), same reasoning as `case` above.
@@ -249,51 +277,66 @@
     \let | arr => "x" ++ path
          | k   => defs.len
          | env' => pushFix arr 0 k env
-         | assigns => \new Array String k (\lam j =>
+         | assigns => mkArray {Array JStmt} {k} (\lam j =>
              \let | ob => compileExpr env' ("y" ++ natToStr j ++ path) (defs j).defBody
-             \in ob.1 ++ arr ++ "[" ++ natToStr j ++ "] = (" ++ rt ++ "Fn)(" ++ ob.2 ++ "); "
+             \in appendStmts ob.1 (jAssign (jIndex (jVar arr) (jIntLit j)) (jCast rtFn ob.2) :: nil)
          )
-    \in ("final " ++ rt ++ "Fn[] " ++ arr ++ " = new " ++ rt ++ "Fn[" ++ natToStr k ++ "]; " ++ concatStr assigns,
-         arr ++ "[" ++ natToStr idx ++ "]")
+    \in (jLocal true (tArray rtFn) arr (just (jNewArraySized rtFn (jIntLit k))) ::
+           concatStmtBlocks assigns,
+         jIndex (jVar arr) (jIntLit idx))
 
 
 -- ---------------------------------------------------------------------------
 -- Program assembly.
 -- ---------------------------------------------------------------------------
 
-\func compileDecl {t : JavaTarget} (kd : \Sigma Kername GlobalDecl) : String =>
+-- Every generated member is a `public static Object f(){ .. }`, so this is the
+-- only method shape the assembly needs.
+\func constMethod (name : String) (body : Array JStmt) : JMember =>
+  jMethod (\new JMethod true tObject name nil body)
+
+\func compileDecl {t : JavaTarget} (kd : \Sigma Kername GlobalDecl) : JMember =>
   \let | name => mangleKername kd.1
   \in \case kd.2 \with {
     | constantDecl cb => \case cb.cstBody \with {
       | just body =>
         \let | o => compileExpr nil "" body
-        \in "  public static Object " ++ name ++ "(){ " ++ o.1 ++ " return " ++ o.2 ++ "; }\n"
+        \in constMethod name (appendStmts o.1 (jReturn o.2 :: nil))
       | nothing => \case lookupAxiom kd.1.kerName javaAxioms \with {
-        | just impl => "  public static Object " ++ name ++ "(){ return " ++ impl ++ "; }\n"
+        | just impl => constMethod name (jReturn impl :: nil)
         | nothing =>
-          "  public static Object " ++ name ++ "(){ throw new RuntimeException(\"axiom " ++ name ++ " not implemented\"); }\n"
+          constMethod name
+            (jThrow (jNew (tClass "RuntimeException")
+                          (jStringLit ("axiom " ++ name ++ " not implemented") :: nil)) :: nil)
       }
     }
-    | inductiveDecl _ => "  /* inductive " ++ name ++ ": erased; values use Data(tag, fields) */\n"
+    | inductiveDecl _ =>
+      jMemberComment ("inductive " ++ name ++ ": erased; values use Data(tag, fields)")
   }
 
-\func compileDecls {t : JavaTarget} (ds : GlobalDeclarations) : String \elim ds
-  | nil => ""
-  | d :: ds => compileDecl d ++ compileDecls ds
+\func compileDecls {t : JavaTarget} (ds : GlobalDeclarations) : Array JMember =>
+  map (\lam d => compileDecl d) ds
 
-\func compileMain {tgt : JavaTarget} (t : LBTerm) : String =>
+-- `__main` holds the program's body; `main` is the entry point printing it.
+\func compileMain {tgt : JavaTarget} (t : LBTerm) : Array JMember =>
   \let | o => compileExpr nil "" t
-  \in "  public static Object __main(){ " ++ o.1 ++ " return " ++ o.2 ++ "; }\n" ++
-     "  public static void main(String[] args){ System.out.println(__main()); }\n"
+  \in constMethod "__main" (appendStmts o.1 (jReturn o.2 :: nil)) ::
+      jMethod (\new JMethod true tVoid "main"
+                 ((\new JParam (tArray (tClass "String")) "args") :: nil)
+                 (jExprStmt (jInvoke (jStatic "System.out") "println"
+                                     (jCallStatic "__main" nil :: nil)) :: nil)) ::
+      nil
 
 -- Only the program-specific class is generated; `Fn`, `Data` (with its
 -- human-readable `toString`) and `BOX` come from the hand-written runtime class
 -- `runtime/Rt.java`, which must be compiled together with this output.
--- The int representation is explicit here; `compileProgram` below keeps
--- BigInteger as the conservative default (no silent overflow).
-\func compileProgramWith (t : JavaTarget) (p : LBProgram) : String =>
-  "public final class Prog {\n" ++
-  compileDecls p.1 ++ compileMain p.2 ++ "}\n"
+\func compileClass {t : JavaTarget} (p : LBProgram) : JClass =>
+  \new JClass "Prog" (Data.Array.++ (compileDecls p.1) (compileMain p.2))
+
+-- The generator and the printer, composed. The int representation is explicit
+-- here; `compileProgram` below keeps BigInteger as the conservative default (no
+-- silent overflow).
+\func compileProgramWith (t : JavaTarget) (p : LBProgram) : String => printClass (compileClass p)
 
 \func compileProgram (p : LBProgram) : String => compileProgramWith targetBigInteger p
 

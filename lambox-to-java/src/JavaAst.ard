@@ -1,20 +1,19 @@
 -- The target language of the extractor: a small Java fragment, defined as an
 -- abstract syntax tree in Arend.
 --
--- WHY THIS EXISTS. `ToJava.ard` currently builds Java *source text* directly
--- (`String` concatenation), so the target language exists only implicitly, in
+-- WHY THIS EXISTS. `ToJava.ard` used to build Java *source text* directly
+-- (`String` concatenation), so the target language existed only implicitly, in
 -- the shape of those string literals. This file makes it explicit:
 --
 --   * it IS the definition of the Java subset we commit to generating -- the
 --     generator can only produce what these constructors allow;
 --   * it is the object a future operational semantics (and hence any
 --     correctness statement about the backend) will be given for;
---   * it separates "which Java construct" from "how it is spelled": printing
---     becomes one trusted function `JavaAst -> String` (see step 3 in
---     RESEARCH_AND_PLAN.md), and the generator no longer worries about
---     parentheses, semicolons or whitespace.
+--   * it separates "which Java construct" from "how it is spelled": printing is
+--     one trusted function, `JavaPrint.ard`'s `printClass`, and the generator
+--     no longer worries about parentheses, semicolons or whitespace.
 --
--- SCOPE. Deliberately exactly what `compileExpr`/`compileDecl` emit today, no
+-- SCOPE. Deliberately exactly what `compileExpr`/`compileDecl` emit, no
 -- more: no arithmetic operators, no loops, no conditionals, no visibility
 -- modifiers besides `public static`, no generics, no interfaces or class
 -- declarations other than the single generated program class. Generated code is

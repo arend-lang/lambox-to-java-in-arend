@@ -1,5 +1,7 @@
 \import StringUtil
 \import LambdaBox
+-- Only `mkArray`: importing Data.Array wholesale would shadow String's `++`.
+\import Data.Array (mkArray)
 \import Data.Bool
 \import Data.Maybe
 \import Data.String
@@ -50,15 +52,14 @@
   | atomS String
   | listS (Array Sexpr)
 
-\func joinWithSpaces (xs : Array String) : String \elim xs
-  | nil => ""
-  | x :: nil => x
-  | x :: xs => x ++ " " ++ joinWithSpaces xs
-
+-- The children are rendered INLINE via `xs i` (not with `Data.Array.map`, which
+-- hides the index behind a closure and fails the termination checker); the
+-- resulting fragments are joined by `StringUtil.joinStr`, which recurses on its
+-- own.
 \func sexprToString (e : Sexpr) : String \elim e
   | atomS c => c
   | listS xs =>
-    "(" ++ joinWithSpaces (\new Array String xs.len (\lam i => sexprToString (xs i))) ++ ")"
+    "(" ++ joinStr " " (mkArray {String} {xs.len} (\lam i => sexprToString (xs i))) ++ ")"
 
 \func quoteAtom (c : String) : String => "\"" ++ c ++ "\""
 
@@ -81,7 +82,7 @@
 -- ---------------------------------------------------------------------------
 
 \func toSExprArray {A : \Type} (f : A -> Sexpr) (xs : Array A) : Sexpr =>
-  listS (\new Array Sexpr xs.len (\lam i => f (xs i)))
+  listS (mkArray {Sexpr} {xs.len} (\lam i => f (xs i)))
 
 \func toSExprMaybe {A : \Type} (f : A -> Sexpr) (m : Maybe A) : Sexpr \elim m
   | nothing => atomS ("None")
@@ -149,18 +150,18 @@
   | const k => listS (atomS ("tConst") :: toSExprKername k :: nil)
   | construct ind n args =>
     wrapTApp (listS (atomS ("tConstruct") :: toSExprInductiveId ind :: toSExprNat n :: listS nil :: nil))
-        (\new Array Sexpr args.len (\lam i => toSExprLBTerm (args i)))
+        (mkArray {Sexpr} {args.len} (\lam i => toSExprLBTerm (args i)))
   | case ind npars scrut brs =>
     listS (atomS ("tCase")
       :: listS (toSExprInductiveId ind :: toSExprNat npars :: nil)
            :: toSExprLBTerm scrut
-                :: listS (\new Array Sexpr brs.len (\lam i =>
+                :: listS (mkArray {Sexpr} {brs.len} (\lam i =>
         listS (toSExprArray toSExprBinderName (brs i).1 :: toSExprLBTerm (brs i).2 :: nil)))
                      :: nil)
   | proj p c => listS (atomS ("tProj") :: toSExprProjectionInfo p :: toSExprLBTerm c :: nil)
   | fix defs idx =>
     listS (atomS ("tFix")
-      :: listS (\new Array Sexpr defs.len (\lam j =>
+      :: listS (mkArray {Sexpr} {defs.len} (\lam j =>
         listS (atomS ("def") :: toSExprBinderName (defs j).defName
                                        :: toSExprLBTerm (defs j).defBody :: toSExprNat (defs j).principalArgIdx :: nil)))
            :: toSExprNat idx :: nil)
