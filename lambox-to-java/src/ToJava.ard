@@ -31,15 +31,23 @@
 -- The fixed part of that encoding (`Fn`, `Data` + its `toString`, `BOX`) is NOT
 -- generated: it lives in the hand-written `runtime/Rt.java` shipped alongside
 -- the output, and generated code refers to it through `rt` below.
+--
+-- Everything target-specific (the runtime class name and the representation of
+-- λ□ primitive ints) is collected in the `JavaTarget` record below, which the
+-- generator takes as an instance parameter instead of threading a
+-- representation argument through every definition.
 -- =============================================================================
 
--- Name of the runtime class (see runtime/Rt.java); `rt` is the qualifier used
--- in every emitted reference, so renaming the class is a one-line change.
-\func runtimeClass : String => "Rt"
-
-\func rt : String => runtimeClass ++ "."
-
--- Representation of λ□ primitive ints in the generated Java.
+-- A Java compilation target: the runtime it talks to plus the representation it
+-- picks for λ□ primitive ints. This is a configuration record (no classifying
+-- field), so it is passed EXPLICITLY once at the top (`compileProgramWith`) and
+-- inferred from there on, as a local instance, by everything it calls.
+--
+-- Adding a new representation is adding a new value of this record -- no new
+-- constructor and no new `\elim` clause anywhere in the generator.
+--
+-- Representation of λ□ primitive ints in the generated Java (`intLit` /
+-- `primOpSuffix`).
 --
 -- KNOWN MISMATCH (documented, not fixed). A λ□ `prim (primInt, _)` is a 63-bit
 -- machine integer with cyclic (mod 2^63) arithmetic -- MetaRocq's
@@ -48,37 +56,44 @@
 -- ("Primitive objects / Primitive integers") specifies the width plus the
 -- unsigned/signed views `Uint63`/`Sint63`. No Java type matches that, and our
 -- own AST does not either (LambdaBox.ard's `PrimModel primInt => Int` is
--- unbounded). So both choices below are approximations, and the caller picks:
---   * `intBigInteger` -- java.math.BigInteger: unbounded, never overflows, but
---     boxed arithmetic and NO wraparound. Matches OUR AST's `Int`, not the
+-- unbounded). So both targets below are approximations, and the caller picks:
+--   * `targetBigInteger` -- java.math.BigInteger: unbounded, never overflows,
+--     but boxed arithmetic and NO wraparound. Matches OUR AST's `Int`, not the
 --     source's int63 nor the C/OCaml int63 runtimes.
---   * `intLong`       -- java.lang.Long: Java's built-in 64-bit integer, much
+--   * `targetLong`       -- java.lang.Long: Java's built-in 64-bit integer, much
 --     faster, wraps -- but at 2^64, not 2^63 as the source semantics demand,
 --     and signed, whereas `PrimInt63` reduction is unsigned/cyclic.
 -- Both agree with the C backend (CertiRocq's prim_int63_*) and the OCaml one
 -- (unboxed OCaml `int`, cf. ExtrOCamlInt63) only while values stay well below
 -- 2^62, which holds for the current examples.
--- FUTURE WORK: a third `intInt63` representation whose literals and
+-- FUTURE WORK: a third `targetInt63` value whose literals and
 -- `Rt.PRIM_*` ops normalize mod 2^63 (following `Uint63`), which is the only
 -- one that could be proved to agree with λ□'s evaluation relation once that
 -- exists. See LambdaBox.ard's `PrimModel` and RESEARCH_AND_PLAN.md.
 --
 -- Everything below is parameterized by this choice; there is no default hidden
 -- inside the generator (see `compileProgramWith` / `compileProgram`).
-\data JavaIntRepr
-  | intBigInteger
-  | intLong
+\class JavaTarget
+  -- Name of the runtime class (see runtime/Rt.java); `rt` below is the qualifier
+  -- used in every emitted reference, so retargeting the runtime is one field.
+  | runtimeClass : String
+  -- A `prim (primInt, i)` literal in this target's representation.
+  | intLit : Int -> String
+  -- Suffix of the runtime's primitive-op constants (`Rt.PRIM_ADD_INT` vs
+  -- `Rt.PRIM_ADD_LONG`); the families are otherwise identical in ABI.
+  | primOpSuffix : String
 
--- A `prim (primInt, i)` literal in the chosen representation.
-\func primIntLit (ir : JavaIntRepr) (i : Int) : String \elim ir
-  | intBigInteger => "new java.math.BigInteger(\"" ++ intToStr i ++ "\")"
-  | intLong => "Long.valueOf(" ++ intToStr i ++ "L)"
+\func rt {t : JavaTarget} : String => runtimeClass ++ "."
 
--- Suffix of the runtime's primitive-op constants (`Rt.PRIM_ADD_INT` vs
--- `Rt.PRIM_ADD_LONG`); the two families are otherwise identical in ABI.
-\func primOpSuffix (ir : JavaIntRepr) : String \elim ir
-  | intBigInteger => "INT"
-  | intLong => "LONG"
+\func targetBigInteger : JavaTarget \cowith
+  | runtimeClass => "Rt"
+  | intLit i => "new java.math.BigInteger(\"" ++ intToStr i ++ "\")"
+  | primOpSuffix => "INT"
+
+\func targetLong : JavaTarget \cowith
+  | runtimeClass => "Rt"
+  | intLit i => "Long.valueOf(" ++ intToStr i ++ "L)"
+  | primOpSuffix => "LONG"
 
 -- Realization of λ□ axioms (constants without a body) in the Java runtime.
 -- Peregrine does this per run via `--attributes` (see ExampleMatMul.ard's
@@ -86,8 +101,8 @@
 -- backend instead has this fixed table of axiom name -> runtime expression,
 -- since the runtime it targets (`runtime/Rt.java`) is ours. An axiom listed
 -- here compiles to the runtime constant, everything else to a throwing stub.
-\func javaAxioms (ir : JavaIntRepr) : Array (\Sigma String String) =>
-  \let | op (nm : String) => rt ++ "PRIM_" ++ nm ++ "_" ++ primOpSuffix ir
+\func javaAxioms {t : JavaTarget} : Array (\Sigma String String) =>
+  \let | op (nm : String) => rt ++ "PRIM_" ++ nm ++ "_" ++ primOpSuffix
   \in ("prim_add_int", op "ADD") ::
       ("prim_mul_int", op "MUL") ::
       ("prim_sub_int", op "SUB") ::
@@ -111,7 +126,7 @@
 -- closed λ□ program has none), so instead of a silent `null` we emit a runtime
 -- call that fails immediately and reports the index and the node.  `n0` is the
 -- original index, kept for the message while `n` counts down.
-\func nthName (n : Nat) (env : Array String) (n0 : Nat) (path : String) : String \elim n, env
+\func nthName {t : JavaTarget} (n : Nat) (env : Array String) (n0 : Nat) (path : String) : String \elim n, env
   | _, nil => rt ++ "unbound(" ++ natToStr n0 ++ ", \"" ++ path ++ "\")"
   | 0, x :: _ => x
   | suc n, _ :: env => nthName n env n0 path
@@ -164,7 +179,7 @@
 
 -- Core compiler. `path` uniquely identifies this node; binder names and child
 -- paths are derived from it, so no state threading is needed.
-\func compileExpr (ir : JavaIntRepr) (env : Array String) (path : String) (t : LBTerm) : Out \elim t
+\func compileExpr {tgt : JavaTarget} (env : Array String) (path : String) (t : LBTerm) : Out \elim t
   | box => ("", rt ++ "BOX")
 
   | bvar n => ("", nthName n env n path)
@@ -174,36 +189,36 @@
   -- runtime call naming the variable rather than to a silent `null`.
   | fvar v => ("", rt ++ "freeVar(\"" ++ v.varName ++ "\", \"" ++ path ++ "\")")
 
-  | prim (primInt, i) => ("", primIntLit ir i)
+  | prim (primInt, i) => ("", intLit i)
 
   | const k => ("", mangleKername k ++ "()")
 
   | app f a =>
-    \let | of => compileExpr ir env ("F" ++ path) f
-         | oa => compileExpr ir env ("A" ++ path) a
+    \let | of => compileExpr env ("F" ++ path) f
+         | oa => compileExpr env ("A" ++ path) a
     \in (of.1 ++ oa.1, "((" ++ rt ++ "Fn)(" ++ of.2 ++ ")).apply(" ++ oa.2 ++ ")")
 
   | lambda _ body =>
     \let | pv => "p" ++ path
-         | ob => compileExpr ir (pv :: env) ("L" ++ path) body
+         | ob => compileExpr (pv :: env) ("L" ++ path) body
     \in ("", "new " ++ rt ++ "Fn(){ public Object apply(Object " ++ pv ++ "){ " ++ ob.1 ++ " return " ++ ob.2 ++ "; } }")
 
   | letIn _ value body =>
-    \let | ov => compileExpr ir env ("V" ++ path) value
+    \let | ov => compileExpr env ("V" ++ path) value
          | lv => "l" ++ path
-         | ob => compileExpr ir (lv :: env) ("B" ++ path) body
+         | ob => compileExpr (lv :: env) ("B" ++ path) body
     \in (ov.1 ++ "final Object " ++ lv ++ " = " ++ ov.2 ++ "; " ++ ob.1, ob.2)
 
   -- construct: recurse inline over the Array of args.
   | construct _ cidx args =>
-    \let | results => \new Array Out args.len (\lam i => compileExpr ir env ("c" ++ natToStr i ++ path) (args i))
+    \let | results => \new Array Out args.len (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
     \in (concatStmts results,
          "new " ++ rt ++ "Data(" ++ natToStr cidx ++ ", new Object[]{ " ++ joinExprs results ++ " })")
 
   -- case: switch on the scrutinee's tag; each branch binds fields[npars ..] then
   -- evaluates its body. We map inline over `brs i`, binding the body by pattern.
   | case _ npars scrut brs =>
-    \let | os => compileExpr ir env ("S" ++ path) scrut
+    \let | os => compileExpr env ("S" ++ path) scrut
          | dv => "d" ++ path
          | rv => "r" ++ path
          -- Recurse on the DIRECT projection `(brs i).2`, NOT a `\case`-bound
@@ -212,7 +227,7 @@
          | cases => \new Array String brs.len (\lam i =>
              \let | bp  => "b" ++ natToStr i ++ path
                   | bnd => bindFields dv npars (brs i).1 env bp
-                  | ob  => compileExpr ir bnd.2 bp (brs i).2
+                  | ob  => compileExpr bnd.2 bp (brs i).2
              \in "case " ++ natToStr i ++ ": { " ++ bnd.1 ++ ob.1
                   ++ rv ++ " = " ++ ob.2 ++ "; break; } ")
     \in (os.1
@@ -223,7 +238,7 @@
          rv)
 
   | proj pinfo scrut =>
-    \let | os => compileExpr ir env ("P" ++ path) scrut
+    \let | os => compileExpr env ("P" ++ path) scrut
     \in (os.1,
          "((" ++ rt ++ "Data)(" ++ os.2 ++ ")).fields["
            ++ natToStr (pinfo.projParamCount) ++ " + " ++ natToStr (pinfo.projFieldIdx) ++ "]")
@@ -235,7 +250,7 @@
          | k   => defs.len
          | env' => pushFix arr 0 k env
          | assigns => \new Array String k (\lam j =>
-             \let | ob => compileExpr ir env' ("y" ++ natToStr j ++ path) (defs j).defBody
+             \let | ob => compileExpr env' ("y" ++ natToStr j ++ path) (defs j).defBody
              \in ob.1 ++ arr ++ "[" ++ natToStr j ++ "] = (" ++ rt ++ "Fn)(" ++ ob.2 ++ "); "
          )
     \in ("final " ++ rt ++ "Fn[] " ++ arr ++ " = new " ++ rt ++ "Fn[" ++ natToStr k ++ "]; " ++ concatStr assigns,
@@ -246,14 +261,14 @@
 -- Program assembly.
 -- ---------------------------------------------------------------------------
 
-\func compileDecl (ir : JavaIntRepr) (kd : \Sigma Kername GlobalDecl) : String =>
+\func compileDecl {t : JavaTarget} (kd : \Sigma Kername GlobalDecl) : String =>
   \let | name => mangleKername kd.1
   \in \case kd.2 \with {
     | constantDecl cb => \case cb.cstBody \with {
       | just body =>
-        \let | o => compileExpr ir nil "" body
+        \let | o => compileExpr nil "" body
         \in "  public static Object " ++ name ++ "(){ " ++ o.1 ++ " return " ++ o.2 ++ "; }\n"
-      | nothing => \case lookupAxiom kd.1.kerName (javaAxioms ir) \with {
+      | nothing => \case lookupAxiom kd.1.kerName javaAxioms \with {
         | just impl => "  public static Object " ++ name ++ "(){ return " ++ impl ++ "; }\n"
         | nothing =>
           "  public static Object " ++ name ++ "(){ throw new RuntimeException(\"axiom " ++ name ++ " not implemented\"); }\n"
@@ -262,12 +277,12 @@
     | inductiveDecl _ => "  /* inductive " ++ name ++ ": erased; values use Data(tag, fields) */\n"
   }
 
-\func compileDecls (ir : JavaIntRepr) (ds : GlobalDeclarations) : String \elim ds
+\func compileDecls {t : JavaTarget} (ds : GlobalDeclarations) : String \elim ds
   | nil => ""
-  | d :: ds => compileDecl ir d ++ compileDecls ir ds
+  | d :: ds => compileDecl d ++ compileDecls ds
 
-\func compileMain (ir : JavaIntRepr) (t : LBTerm) : String =>
-  \let | o => compileExpr ir nil "" t
+\func compileMain {tgt : JavaTarget} (t : LBTerm) : String =>
+  \let | o => compileExpr nil "" t
   \in "  public static Object __main(){ " ++ o.1 ++ " return " ++ o.2 ++ "; }\n" ++
      "  public static void main(String[] args){ System.out.println(__main()); }\n"
 
@@ -276,11 +291,11 @@
 -- `runtime/Rt.java`, which must be compiled together with this output.
 -- The int representation is explicit here; `compileProgram` below keeps
 -- BigInteger as the conservative default (no silent overflow).
-\func compileProgramWith (ir : JavaIntRepr) (p : LBProgram) : String =>
+\func compileProgramWith (t : JavaTarget) (p : LBProgram) : String =>
   "public final class Prog {\n" ++
-  compileDecls ir p.1 ++ compileMain ir p.2 ++ "}\n"
+  compileDecls p.1 ++ compileMain p.2 ++ "}\n"
 
-\func compileProgram (p : LBProgram) : String => compileProgramWith intBigInteger p
+\func compileProgram (p : LBProgram) : String => compileProgramWith targetBigInteger p
 
 -- Print a generated program with `putStrLn` (Data.String -> console).
 -- \import Debug

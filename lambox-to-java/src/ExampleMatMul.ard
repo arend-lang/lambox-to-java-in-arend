@@ -78,7 +78,7 @@
 -- Java backend realizes them as the curried constants
 -- Rt.PRIM_{ADD,MUL,SUB,EQB}_{INT,LONG} in runtime/Rt.java, wired up by the
 -- `javaAxioms` table in ToJava.ard (INT = BigInteger, LONG = Java's built-in
--- 64-bit int; picked by ToJava's JavaIntRepr).
+-- 64-bit int; picked by ToJava's JavaTarget record).
 -- All four are ARITY-2 on purpose: the shipped C runtime has no arity-1 ops,
 -- so "sub1 x" is expressed as `sub x 1` and "isZero x" as `eqb x 0`.
 -- eqb's result ABI matches BoolBlock below: mk_bool encodes false as unboxed

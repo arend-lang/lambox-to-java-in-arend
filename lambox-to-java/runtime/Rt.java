@@ -87,8 +87,8 @@ public final class Rt {
   // curried: `((Fn)((Fn)PRIM_ADD_INT).apply(a)).apply(b)`.
   //
   // There are TWO families, one per int representation the generator can pick
-  // (`JavaIntRepr` in ToJava.ard) — a program uses exactly one of them, and its
-  // `prim` literals are of the matching type:
+  // (the `JavaTarget` record in ToJava.ard) — a program uses exactly one of
+  // them, and its `prim` literals are of the matching type:
   //   * `PRIM_*_INT`  — java.math.BigInteger values: unbounded, never overflow,
   //     but boxed arithmetic and NO wraparound.
   //   * `PRIM_*_LONG` — java.lang.Long values, i.e. Java's built-in integers:
@@ -105,7 +105,7 @@ public final class Rt {
   // OCaml `int`, cf. ExtrOCamlInt63); they agree as long as values stay well
   // below 2^62, which holds for the current examples.
   // FUTURE WORK: a `PRIM_*_INT63` family normalizing mod 2^63 per `Uint63`,
-  // selected by a third `JavaIntRepr` alternative.
+  // selected by a third `JavaTarget` value (`targetInt63`).
   private static java.math.BigInteger num(Object x) { return (java.math.BigInteger) x; }
 
   private static long lng(Object x) { return ((Long) x).longValue(); }

@@ -22,8 +22,8 @@ ROOT="$(cd "$TEST_DIR/.." && pwd)"
 # The fixed Java runtime (`Rt.java`: Fn, Data, BOX, PRIM_*) is hand-written, not
 # generated; it is compiled next to every generated `Prog.java`.
 : "${JAVA_RUNTIME_DIR:=$AREND_PROJECT/runtime}"
-# Representation of λ□ primitive ints in the generated Java (`JavaIntRepr` in
-# ToJava.ard): `bigint` = java.math.BigInteger (unbounded, no wraparound),
+# Representation of λ□ primitive ints in the generated Java (the `JavaTarget`
+# record in ToJava.ard): `bigint` = java.math.BigInteger (unbounded, no wraparound),
 # `long` = Java's built-in 64-bit integer (faster, wraps at 2^64). It selects
 # the print-definition variant a case asks for, so
 #   JAVA_INT=long test/run-case.sh matmul java

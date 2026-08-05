@@ -75,7 +75,8 @@ Missing tools are reported by `require_tool` with a clear message.
 ## Integer representation of the Java backend
 
 `JAVA_INT` picks how λ□ primitive ints are represented in the generated Java
-(`JavaIntRepr` in `ToJava.ard`); both variants use the same `Rt.java`:
+(the `JavaTarget` record in `ToJava.ard`); both variants use the same
+`Rt.java`:
 
     test/run-case.sh matmul java               # JAVA_INT=bigint (default)
     JAVA_INT=long test/run-case.sh matmul java
