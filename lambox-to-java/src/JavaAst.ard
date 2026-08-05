@@ -1,0 +1,205 @@
+-- The target language of the extractor: a small Java fragment, defined as an
+-- abstract syntax tree in Arend.
+--
+-- WHY THIS EXISTS. `ToJava.ard` currently builds Java *source text* directly
+-- (`String` concatenation), so the target language exists only implicitly, in
+-- the shape of those string literals. This file makes it explicit:
+--
+--   * it IS the definition of the Java subset we commit to generating -- the
+--     generator can only produce what these constructors allow;
+--   * it is the object a future operational semantics (and hence any
+--     correctness statement about the backend) will be given for;
+--   * it separates "which Java construct" from "how it is spelled": printing
+--     becomes one trusted function `JavaAst -> String` (see step 3 in
+--     RESEARCH_AND_PLAN.md), and the generator no longer worries about
+--     parentheses, semicolons or whitespace.
+--
+-- SCOPE. Deliberately exactly what `compileExpr`/`compileDecl` emit today, no
+-- more: no arithmetic operators, no loops, no conditionals, no visibility
+-- modifiers besides `public static`, no generics, no interfaces or class
+-- declarations other than the single generated program class. Generated code is
+-- untyped-style: every value has static type `Object` and is cast where needed,
+-- so this fragment is NOT Featherweight Java and is not meant to be.
+-- The fixed runtime (`Rt.Fn`, `Rt.Data`, `Rt.BOX`, `Rt.PRIM_*`) is hand-written
+-- (`runtime/Rt.java`) and appears here only as referenced names, never as
+-- declarations.
+--
+-- COMPARE (rationale and the longer survey live in RESEARCH_AND_PLAN.md):
+--   * Malfunction.v (metarocq-malfunction) -- the verified λ□ backend; its
+--     `Ident.t := string` / `Longident.t := string` split is `JIdent`/`JQIdent`
+--     below, and its `Mvar`/`Mglobal` split is `jVar`/`jStatic`.
+--   * CompCert `cfrontend/Clight.v` -- the same two-sort `expr`/`statement`
+--     shape (`Ecast`, `Efield`, `Sassign`, `Sswitch`, `Sreturn`), and the same
+--     "target AST in the proof assistant, printer outside it" division that
+--     CertiCoq's C backend uses (`printClight.ml`).
+--   * Featherweight Java (Igarashi-Pierce-Wadler) -- `x | e.f | e.m(e*) |
+--     new C(e*) | (C)e` is exactly the expression core here; our extra nodes
+--     (literals, arrays, assignment, statements) are the ones a code generator
+--     cannot avoid.
+--   * Jinja / µJava (Isabelle) -- the existing Java-source semantics, and the
+--     dissenting design: Jinja folds statements into expressions, we do not.
+--
+-- IDENTIFIERS. Two type synonyms, both `String`: `JIdent` for a simple Java
+-- identifier and `JQIdent` for a possibly dotted (qualified) one. Every such
+-- position holds an ALREADY-VALID Java name: mangling happens at exactly one
+-- boundary (`mangleKername` in `ToJava.ard`), and generator-invented binders
+-- (`p<path>`, `l<path>`, ...) are legal by construction. Plain strings are what
+-- every comparable *source-level* backend uses (MetaRocq `ident := string`,
+-- lean-to-lambdabox `abbrev Ident := String`, peregrine's sanitizers
+-- `utf8_string -> string`); interned integers (CompCert `ident := positive`,
+-- CertiCoq λANF `var`) buy cheap maps and provable freshness, neither of which
+-- this generator needs.
+--
+-- STATEMENTS AND EXPRESSIONS ARE TWO SORTS, mutually recursive (a statement
+-- contains expressions; an anonymous-class expression contains statements).
+-- That mirrors the generator's `Out = \Sigma String String`, a statement
+-- prelude plus a value expression; after the retarget it becomes
+-- `\Sigma (Array JStmt) JExpr`.
+--
+-- BINDERS ARE NAMES, not de Bruijn indices: the `path`-derived names are what
+-- makes the generator's recursion pass Arend's termination checker without
+-- state threading. Well-scopedness can be added later (closure conversion is
+-- the natural point).
+--
+-- COMMENTS are trivia, and they are available in *every* position that
+-- occupies a line of its own -- statements (`jComment`) and class members
+-- (`jMemberComment`) -- rather than only where the generator happens to need
+-- one today. Expressions and types carry no comment node: they have no line to
+-- attach one to, and comment-as-expression would have to survive printing in
+-- the middle of a term. Nothing else in the AST is annotatable, so this is
+-- "everywhere possible".
+
+\import Data.Bool
+\import Data.Maybe
+\import Data.String
+
+-- ---------------------------------------------------------------------------
+-- Identifiers
+-- ---------------------------------------------------------------------------
+
+-- A simple Java identifier: a local, a parameter, a field or a method name.
+\func JIdent => String
+
+-- A possibly dotted Java name: `Rt`, `Rt.Fn`, `System.out`,
+-- `java.math.BigInteger`, `Long.valueOf`.
+\func JQIdent => String
+
+-- ---------------------------------------------------------------------------
+-- Types
+--
+-- Only what appears in generated code: `Object` (everything), a named class or
+-- interface (`Rt.Fn`, `Rt.Data`, `java.math.BigInteger`, `String`), arrays
+-- (`Object[]`, `Rt.Fn[]`), and `void` (only `main`'s return type).
+-- ---------------------------------------------------------------------------
+
+\data JType
+  | tObject
+  | tVoid
+  | tClass JQIdent
+  | tArray JType
+
+-- ---------------------------------------------------------------------------
+-- Expressions
+-- ---------------------------------------------------------------------------
+
+\data JExpr
+  -- A local variable or method parameter used as a value: `p3`, `l7`.
+  -- (Malfunction's `Mvar`, Clight's `Evar`, Featherweight Java's `x`.)
+  | jVar JIdent
+  -- A qualified name used as a value or as the receiver of a static member:
+  -- `Rt`, `System.out`. Kept apart from `jVar` because it is resolved
+  -- globally, not in the local environment (Malfunction's `Mglobal`).
+  | jStatic JQIdent
+  -- `e.f` -- field access: `d.tag`, `d.fields`, `Rt.BOX`, `Rt.PRIM_ADD_INT`.
+  | jField JExpr JIdent
+  -- `e[i]` -- array access: `d.fields[2]`, `x3[1]`.
+  -- There is no arithmetic node, so the one addition the generator used to emit
+  -- (`fields[npars + fieldIdx]` for `proj`) is folded on the Arend side into a
+  -- single `jIntLit`.
+  | jIndex JExpr JExpr
+  -- `(T)(e)` -- a downcast; unavoidable, since every value is typed `Object`.
+  | jCast JType JExpr
+  -- `e.m(args)` -- instance method call: `.apply(a)`, `System.out.println(..)`.
+  | jInvoke JExpr JIdent (Array JExpr)
+  -- `m(args)` where `m` may be qualified: a generated constant `c_foo()`,
+  -- `Rt.unbound(i, path)`, `Long.valueOf(5L)`.
+  | jCallStatic JQIdent (Array JExpr)
+  -- `new T(args)` -- `new Rt.Data(tag, fields)`, `new java.math.BigInteger("7")`,
+  -- `new RuntimeException("no matching branch")`.
+  | jNew JType (Array JExpr)
+  -- `new T[]{ es }` -- an array with an initializer: `new Object[]{ a, b }`.
+  | jNewArrayInit JType (Array JExpr)
+  -- `new T[n]` -- a sized (null-filled, later assigned) array: the `Rt.Fn[k]`
+  -- used to tie the knot for `fix`.
+  | jNewArraySized JType JExpr
+  -- An anonymous class implementing a one-method interface, i.e. our closures:
+  --   `new <iface>(){ public Object apply(Object <param>){ <body> } }`
+  -- The method is not a `JMethod` here but spelled out as (interface, parameter
+  -- name, body): it is always `public Object apply(Object)`, and a record field
+  -- would put `JMethod` into the JExpr/JStmt recursion, which Arend rejects
+  -- (records cannot be part of a mutual `\data` cycle).
+  -- This node is temporary by design: closure conversion (step 5) replaces it
+  -- with named `Closure_<path>` classes.
+  | jAnonFn JType JIdent (Array JStmt)
+  -- A `String` literal; the printer is responsible for quoting and escaping.
+  | jStringLit String
+  -- A decimal `int` literal: constructor tags, field indices, array indices,
+  -- array sizes. Nat, because every such number is a position or a count.
+  | jIntLit Nat
+  -- A `long` literal (`5L`), i.e. `Int` because it may be negative. Only used
+  -- to build λ□ `prim` int values (`Long.valueOf(5L)`); the `BigInteger`
+  -- representation instead uses `jNew` over a `jStringLit`.
+  | jLongLit Int
+
+-- ---------------------------------------------------------------------------
+-- Statements
+-- ---------------------------------------------------------------------------
+
+\data JStmt
+  -- A local variable declaration, optionally `final` and optionally
+  -- initialized: `final Object l3 = e;`, `Object r3;`.
+  -- An uninitialized one is exactly the `case` result variable, assigned in
+  -- every branch.
+  | jLocal (isFinal : Bool) JType JIdent (Maybe JExpr)
+  -- `lhs = rhs;` where `lhs` is a name or an array element (the `fix` knot).
+  | jAssign JExpr JExpr
+  -- `switch (scrut) { cases default: dflt }`, where a case is
+  -- `case <tag>: { <stmts> break; }` -- the printer emits the block and the
+  -- `break`, so this fragment has no fallthrough. The cases are a `\Sigma`
+  -- rather than a record for the same reason as `jAnonFn` above (and as
+  -- `LambdaBox.ard`'s `case` branches); Malfunction's
+  -- `Mswitch of t * (case list * t) list` makes the same choice.
+  | jSwitch JExpr (Array (\Sigma Nat (Array JStmt))) (Array JStmt)
+  -- `throw e;`
+  | jThrow JExpr
+  -- `return e;`
+  | jReturn JExpr
+  -- An expression evaluated for its effect only: `System.out.println(..);`.
+  | jExprStmt JExpr
+  -- `// <text>` on a line of its own; see COMMENTS above.
+  | jComment String
+
+
+-- ---------------------------------------------------------------------------
+-- Members and the program class
+-- ---------------------------------------------------------------------------
+
+\record JParam (paramType : JType) (paramName : JIdent)
+
+-- A method of the generated class: a constant `c_foo`, `__main`, or `main`.
+-- (The `apply` of a closure is part of `jAnonFn` instead, see above.)
+\record JMethod
+  (mIsStatic : Bool)
+  (mReturn : JType)
+  (mName : JIdent)
+  (mParams : Array JParam)
+  (mBody : Array JStmt)
+
+\data JMember
+  | jMethod JMethod
+  -- `// <text>` in class-body position: what an erased inductive produces.
+  | jMemberComment String
+
+-- The single generated class (`public final class Prog { ... }`); the runtime
+-- class is hand-written and not part of this AST.
+\record JClass (className : JIdent) (classMembers : Array JMember)
