@@ -1,0 +1,689 @@
+#!/usr/bin/env python3
+"""ast-to-arend -- turn a Peregrine lambda-box `.ast` file into Arend source.
+
+Two modes, both reading the `.ast` from a file argument or stdin and writing
+Arend source to stdout (or to `-o FILE`):
+
+  --mode=builder  (default)  an Arend module building the program with the
+                             `LambdaBox.ard` constructors, in the style of
+                             `ExampleMatMul.ard`, plus the printing entry
+                             points the test harness extracts.
+  --mode=literal             the same `.ast` text as a single-line Arend
+                             string literal, for a future in-Arend
+                             deserializer (option A) -- shares the escaping
+                             logic with the builder mode.
+
+This is a *test-harness tool*, deliberately outside the verified compiler:
+its output is checked by the Arend typechecker, which is what makes an
+unverified importer acceptable here.
+
+The grammar mirrored is exactly the one `lambox-to-java/src/Serialize.ard`
+writes (which in turn mirrors Peregrine's own serializer), read in reverse.
+Anything outside our lambda-box subset (`tVar`, `tEvar`, `tCoFix`, `tLazy`,
+`tForce`, non-int primitives, typed lambda-box) is a loud failure: `LBTerm`
+in `LambdaBox.ard` has no counterpart, and silently mistranslating it would
+make the corpus useless as a coverage report.
+"""
+
+import argparse
+import sys
+
+WIDTH = 100  # break a builder call across lines when it does not fit
+
+
+class Unsupported(Exception):
+    """An `.ast` construct our LBTerm cannot represent."""
+
+
+class ParseError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# S-expression reader.
+# ---------------------------------------------------------------------------
+
+class Str(str):
+    """A quoted atom, kept apart from bare atoms so `"0"` != `0`."""
+
+
+def tokenize(text):
+    toks, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            i += 1
+        elif c in '()':
+            toks.append(c)
+            i += 1
+        elif c == '"':
+            j, buf = i + 1, []
+            while True:
+                if j >= n:
+                    raise ParseError("unterminated string literal")
+                d = text[j]
+                if d == '\\':
+                    if j + 1 >= n:
+                        raise ParseError("trailing backslash in string literal")
+                    buf.append(text[j + 1])
+                    j += 2
+                elif d == '"':
+                    j += 1
+                    break
+                else:
+                    buf.append(d)
+                    j += 1
+            toks.append(Str(''.join(buf)))
+            i = j
+        else:
+            j = i
+            while j < n and not text[j].isspace() and text[j] not in '()"':
+                j += 1
+            toks.append(text[i:j])
+            i = j
+    return toks
+
+
+def parse(text):
+    toks = tokenize(text)
+    pos = 0
+
+    def read():
+        nonlocal pos
+        if pos >= len(toks):
+            raise ParseError("unexpected end of input")
+        t = toks[pos]
+        pos += 1
+        if t == '(':
+            items = []
+            while True:
+                if pos >= len(toks):
+                    raise ParseError("unterminated list")
+                if toks[pos] == ')':
+                    pos += 1
+                    return items
+                items.append(read())
+        if t == ')':
+            raise ParseError("unexpected ')'")
+        return t
+
+    e = read()
+    if pos != len(toks):
+        raise ParseError("trailing data after the top-level s-expression")
+    return e
+
+
+# ---------------------------------------------------------------------------
+# Documents: just enough layout to keep the generated Arend readable.
+# ---------------------------------------------------------------------------
+
+class Doc:
+    """`atomic` documents need no parentheses in argument position."""
+
+    atomic = False
+
+    def compact(self):
+        raise NotImplementedError
+
+    def render(self, indent):
+        raise NotImplementedError
+
+    def lay(self, indent):
+        """Lines: the first one unindented, every later one indented already."""
+        one = self.compact()
+        if indent + len(one) <= WIDTH:
+            return [one]
+        return self.render(indent)
+
+
+class Atom(Doc):
+    atomic = True
+
+    def __init__(self, text):
+        self.text = text
+
+    def compact(self):
+        return self.text
+
+    def render(self, indent):
+        return [self.text]
+
+
+class Call(Doc):
+    """`head a b`, parenthesizing compound arguments."""
+
+    def __init__(self, head, args):
+        self.head = head
+        self.args = args
+
+    def compact(self):
+        return ' '.join([self.head] + [paren(a) for a in self.args])
+
+    def render(self, indent):
+        lines = [self.head]
+        for a in self.args:
+            lines.extend(indent_all(arg(a, indent + 2), indent + 2))
+        return lines
+
+
+class ListLit(Doc):
+    """`a :: b :: nil`."""
+
+    def __init__(self, items):
+        self.items = items
+        self.atomic = not items  # the empty list is just `nil`
+
+    def compact(self):
+        return ''.join(paren(i) + ' :: ' for i in self.items) + 'nil'
+
+    def render(self, indent):
+        lines = []
+        for k, i in enumerate(self.items):
+            sub = arg(i, indent)
+            sub[-1] += ' ::'
+            lines.extend(sub if k == 0 else indent_all(sub, indent))
+        lines.append(' ' * indent + 'nil')
+        return lines
+
+
+class Tuple(Doc):
+    """`(a, b)` -- self-delimiting, so never parenthesized again."""
+
+    atomic = True
+
+    def __init__(self, items):
+        self.items = items
+
+    def compact(self):
+        return '(' + ', '.join(i.compact() for i in self.items) + ')'
+
+    def render(self, indent):
+        lines = ['(']
+        for k, i in enumerate(self.items):
+            sub = indent_all(arg(i, indent + 2), indent + 2)
+            if k + 1 < len(self.items):
+                sub[-1] += ','
+            lines.extend(sub)
+        lines.append(' ' * indent + ')')
+        return lines
+
+
+def indent_all(lines, indent):
+    """Indent the first line too (the later ones already are)."""
+    return [' ' * indent + lines[0]] + lines[1:]
+
+
+def arg(d, indent):
+    """`d` laid out at `indent`, parenthesized if it needs to be."""
+    if d.atomic:
+        return d.lay(indent)
+    sub = d.lay(indent + 1)
+    if len(sub) == 1:
+        return ['(' + sub[0] + ')']
+    return ['(' + sub[0]] + sub[1:] + [' ' * indent + ')']
+
+
+def paren(d):
+    return d.compact() if d.atomic else '(' + d.compact() + ')'
+
+
+def render_top(d, indent=2):
+    """The right-hand side of a `\\func`, indented by `indent`."""
+    return '\n'.join(indent_all(d.lay(indent), indent))
+
+
+# ---------------------------------------------------------------------------
+# Arend literals.
+# ---------------------------------------------------------------------------
+
+AREND_ESCAPES = {'\\': '\\\\', '"': '\\"', '\n': '\\n', '\t': '\\t', '\r': '\\r'}
+
+
+def arend_string(s):
+    out = ['"']
+    for c in s:
+        if c in AREND_ESCAPES:
+            out.append(AREND_ESCAPES[c])
+        elif ord(c) < 0x20 or ord(c) == 0x7F:
+            raise Unsupported("control character %r in a name" % c)
+        else:
+            out.append(c)
+    out.append('"')
+    return ''.join(out)
+
+
+def nat(tok):
+    """A Nat atom. Peregrine writes them bare; be strict about it."""
+    if isinstance(tok, list) or isinstance(tok, Str) or not tok.isdigit():
+        raise ParseError("expected a natural number, got %s" % show(tok))
+    return Atom(tok)
+
+
+def integer(tok):
+    """A Prelude Int atom (`primInt` payloads may be negative)."""
+    if isinstance(tok, list) or isinstance(tok, Str):
+        raise ParseError("expected an integer, got %s" % show(tok))
+    if tok.startswith('-') and tok[1:].isdigit():
+        return Call('neg', [Atom(tok[1:])])
+    if not tok.isdigit():
+        raise ParseError("expected an integer, got %s" % show(tok))
+    return Atom(tok)
+
+
+def ident(tok):
+    if not isinstance(tok, Str):
+        raise ParseError("expected a quoted identifier, got %s" % show(tok))
+    return Atom(arend_string(str(tok)))
+
+
+def sexpr_key(e):
+    """A hashable, injective rendering, used to identify kernames."""
+    if isinstance(e, Str):
+        return ('str', str(e))
+    if isinstance(e, list):
+        return ('list',) + tuple(sexpr_key(x) for x in e)
+    return ('sym', e)
+
+
+def show(e, depth=0):
+    if isinstance(e, Str):
+        return '"%s"' % e
+    if isinstance(e, list):
+        if depth > 2:
+            return '(...)'
+        return '(' + ' '.join(show(x, depth + 1) for x in e) + ')'
+    return str(e)
+
+
+# ---------------------------------------------------------------------------
+# `.ast` -> Arend builder documents. One function per Serialize.ard clause.
+# ---------------------------------------------------------------------------
+
+def tagged(e, tag, arity=None):
+    """Check `e` is `(tag ...)` and return its arguments."""
+    if not isinstance(e, list) or not e or e[0] != tag:
+        raise ParseError("expected (%s ...), got %s" % (tag, show(e)))
+    args = e[1:]
+    if arity is not None and len(args) != arity:
+        raise ParseError("%s expects %d argument(s), got %d" % (tag, arity, len(args)))
+    return args
+
+
+def expect_list(e, what):
+    if not isinstance(e, list):
+        raise ParseError("expected a list of %s, got %s" % (what, show(e)))
+    return e
+
+
+def binder(e):
+    if e == 'nAnon':
+        return Atom('anon')
+    return Call('named', [Call('\\new FreeVarId', [ident(tagged(e, 'nNamed', 1)[0])])])
+
+
+def modpath(e):
+    if not isinstance(e, list) or not e:
+        raise ParseError("expected a module path, got %s" % show(e))
+    if e[0] == 'MPfile':
+        dp = expect_list(tagged(e, 'MPfile', 1)[0], 'directory components')
+        return Call('mpFile', [ListLit([ident(d) for d in dp])])
+    if e[0] == 'MPbound':
+        dp, id_, n = tagged(e, 'MPbound', 3)
+        return Call('mpBound', [ListLit([ident(d) for d in expect_list(dp, 'directory components')]),
+                                ident(id_), nat(n)])
+    if e[0] == 'MPdot':
+        mp, id_ = tagged(e, 'MPdot', 2)
+        return Call('mpDot', [modpath(mp), ident(id_)])
+    raise ParseError("unknown module path head: %s" % show(e[0]))
+
+
+def kername(e):
+    if not isinstance(e, list) or len(e) != 2:
+        raise ParseError("expected a kername (modpath name), got %s" % show(e))
+    return Call('\\new Kername', [modpath(e[0]), ident(e[1])])
+
+
+def inductive_id(e):
+    kn, idx = tagged(e, 'inductive', 2)
+    return Call('\\new InductiveId', [kername(kn), nat(idx)])
+
+
+def projection_info(e):
+    ind, npars, idx = tagged(e, 'projection', 3)
+    return Call('\\new ProjectionInfo', [inductive_id(ind), nat(npars), nat(idx)])
+
+
+def prim_val(e):
+    if not isinstance(e, list) or not e:
+        raise ParseError("expected a primitive value, got %s" % show(e))
+    if e[0] != 'primInt':
+        raise Unsupported("primitive %s: LambdaBox.ard's PrimTag has only primInt" % show(e[0]))
+    payload, = tagged(e, 'primInt', 1)
+    return Tuple([Atom('primInt'), integer(payload)])
+
+
+UNSUPPORTED_TERMS = {
+    'tVar': "tVar: dropped from LBTerm (locally-nameless `fvar` is not serialized)",
+    'tEvar': "tEvar: dropped from LBTerm (metavariables are not part of the pipeline)",
+    'tCoFix': "tCoFix: dropped from LBTerm (no coinduction in the strict fragment)",
+    'tLazy': "tLazy: dropped from LBTerm (the fragment is strict)",
+    'tForce': "tForce: dropped from LBTerm (the fragment is strict)",
+}
+
+
+def term(e):
+    if e == 'tBox':
+        return Atom('box')
+    if isinstance(e, str) and not isinstance(e, Str):
+        raise Unsupported(UNSUPPORTED_TERMS.get(e, "unknown nullary term %s" % show(e)))
+    if not isinstance(e, list) or not e:
+        raise ParseError("expected a term, got %s" % show(e))
+    head = e[0]
+    if head in UNSUPPORTED_TERMS:
+        raise Unsupported(UNSUPPORTED_TERMS[head])
+    if head == 'tRel':
+        return Call('bvar', [nat(tagged(e, 'tRel', 1)[0])])
+    if head == 'tLambda':
+        na, body = tagged(e, 'tLambda', 2)
+        return Call('lambda', [binder(na), term(body)])
+    if head == 'tLetIn':
+        na, val, body = tagged(e, 'tLetIn', 3)
+        return Call('letIn', [binder(na), term(val), term(body)])
+    if head == 'tApp':
+        return application(e)
+    if head == 'tConst':
+        return Call('const', [kername(tagged(e, 'tConst', 1)[0])])
+    if head == 'tConstruct':
+        return construct(e, [])
+    if head == 'tCase':
+        info, scrut, brs = tagged(e, 'tCase', 3)
+        if not isinstance(info, list) or len(info) != 2:
+            raise ParseError("expected (inductive npars) in tCase, got %s" % show(info))
+        branches = []
+        for br in expect_list(brs, 'case branches'):
+            if not isinstance(br, list) or len(br) != 2:
+                raise ParseError("expected (binders body) branch, got %s" % show(br))
+            binders = [binder(b) for b in expect_list(br[0], 'branch binders')]
+            branches.append(Tuple([ListLit(binders), term(br[1])]))
+        return Call('case', [inductive_id(info[0]), nat(info[1]), term(scrut), ListLit(branches)])
+    if head == 'tProj':
+        p, c = tagged(e, 'tProj', 2)
+        return Call('proj', [projection_info(p), term(c)])
+    if head == 'tFix':
+        defs, idx = tagged(e, 'tFix', 2)
+        out = []
+        for d in expect_list(defs, 'fix definitions'):
+            na, body, parg = tagged(d, 'def', 3)
+            out.append(Call('\\new FixDef LBTerm', [binder(na), term(body), nat(parg)]))
+        return Call('fix', [ListLit(out), nat(idx)])
+    if head == 'tPrim':
+        return Call('prim', [prim_val(tagged(e, 'tPrim', 1)[0])])
+    raise Unsupported("unknown term head %s" % show(head))
+
+
+# Constructor arities, filled in from the file's InductiveDecls before any term
+# is translated: (kername key, inductive index, constructor index) -> cstrNargs.
+CTOR_ARITY = {}
+
+
+def spine(e):
+    """Flatten a curried `tApp` into (head, [arg, ...])."""
+    args = []
+    while isinstance(e, list) and e and e[0] == 'tApp':
+        f, a = tagged(e, 'tApp', 2)  # rejects a malformed tApp instead of looping
+        args.append(a)
+        e = f
+    args.reverse()
+    return e, args
+
+
+def application(e):
+    """A `tApp` spine, re-saturating a constructor at its head.
+
+    λ□ as Peregrine writes it has `cstr_as_blocks = false`: `tConstruct` always
+    carries an EMPTY argument list and its fields arrive as ordinary curried
+    `tApp`s (Serialize.ard's `wrapTApp` does the same in the other direction).
+    ToJava.ard's `construct` clause, by contrast, emits `new Rt.Data(tag,
+    fields)` from the args it is given and would compile a curried application
+    into `((Rt.Fn) someData).apply(...)`, which does not even typecheck as Java.
+    So the fields are collected back here, using the constructor's declared
+    `cstrNargs`; anything beyond them stays an ordinary application.
+
+    THIS IS A WORKAROUND, and it belongs to the compiler, not here: every λ□
+    file coming from Rocq/Lean/Agda uses the curried form for every single
+    constructor, so `compileExpr` should either recognize an application spine
+    headed by a `construct` or eta-expand an under-applied one. Both need the
+    constructor arities threaded in (`compileExpr` today discards even the
+    `InductiveId`). Until then an imported program is only compilable because
+    it was re-saturated here.
+    """
+    head, args = spine(e)
+    if isinstance(head, list) and head and head[0] == 'tConstruct':
+        doc = construct(head, args)
+        rest = args[len(field_args(head, args)):]
+    else:
+        doc = term(head)
+        rest = args
+    for a in rest:
+        doc = Call('app', [doc, term(a)])
+    return doc
+
+
+def ctor_arity(e):
+    """`cstrNargs` of the constructor `(tConstruct ind idx args)` refers to."""
+    ind, idx, _ = tagged(e, 'tConstruct', 3)
+    kn, ind_idx = tagged(ind, 'inductive', 2)
+    key = (sexpr_key(kn), nat(ind_idx).text, nat(idx).text)
+    if key not in CTOR_ARITY:
+        raise ParseError("no declaration for constructor %s of %s"
+                         % (show(idx), show(kn)))
+    return CTOR_ARITY[key]
+
+
+def field_args(head, args):
+    """The prefix of `args` that are constructor fields, not applications."""
+    _, _, inline = tagged(head, 'tConstruct', 3)
+    inline = expect_list(inline, 'constructor arguments')
+    if inline:
+        # A cstr_as_blocks build already put the fields inside tConstruct.
+        return []
+    return args[:ctor_arity(head)]
+
+
+def construct(e, args):
+    ind, idx, inline = tagged(e, 'tConstruct', 3)
+    fields = expect_list(inline, 'constructor arguments') or field_args(e, args)
+    arity = ctor_arity(e)
+    if len(fields) != arity:
+        raise Unsupported(
+            "constructor %s of %s is applied to %d of its %d field(s): a partial"
+            " constructor would need eta-expansion, which ToJava.ard's"
+            " `construct` clause cannot express"
+            % (show(idx), show(tagged(ind, 'inductive', 2)[0]), len(fields), arity))
+    return Call('construct', [inductive_id(ind), nat(idx),
+                              ListLit([term(a) for a in fields])])
+
+
+def maybe(e, f):
+    if e == 'None':
+        return Atom('nothing')
+    return Call('just', [f(tagged(e, 'Some', 1)[0])])
+
+
+def boolean(e):
+    if e not in ('true', 'false'):
+        raise ParseError("expected a boolean, got %s" % show(e))
+    return Atom(e)
+
+
+KELIM = {'IntoSProp', 'IntoPropSProp', 'IntoSetPropSProp', 'IntoAny'}
+RECURSIVITY = {'Finite': 'finite', 'CoFinite': 'cofinite', 'BiFinite': 'bifinite'}
+
+
+def constructor_body(e):
+    name, nargs = tagged(e, 'constructor_body', 2)
+    return Call('\\new ConstructorBody', [ident(name), nat(nargs)])
+
+
+def projection_body(e):
+    name, = tagged(e, 'projection_body', 1)
+    return Call('\\new ProjectionBody', [ident(name)])
+
+
+def one_inductive_body(e):
+    name, prop, kelim, ctors, projs = tagged(e, 'one_inductive_body', 5)
+    if kelim not in KELIM:
+        raise ParseError("unknown allowed-eliminations %s" % show(kelim))
+    return Call('\\new OneInductiveBody',
+                [ident(name), boolean(prop), Atom(kelim),
+                 ListLit([constructor_body(c) for c in expect_list(ctors, 'constructors')]),
+                 ListLit([projection_body(p) for p in expect_list(projs, 'projections')])])
+
+
+def mutual_inductive_body(e):
+    kind, npars, bodies = tagged(e, 'mutual_inductive_body', 3)
+    if kind not in RECURSIVITY:
+        raise ParseError("unknown recursivity kind %s" % show(kind))
+    return Call('\\new MutualInductiveBody',
+                [Atom(RECURSIVITY[kind]), nat(npars),
+                 ListLit([one_inductive_body(b) for b in expect_list(bodies, 'inductive bodies')])])
+
+
+def global_decl(e):
+    if not isinstance(e, list) or not e:
+        raise ParseError("expected a global declaration, got %s" % show(e))
+    if e[0] == 'ConstantDecl':
+        body, = tagged(tagged(e, 'ConstantDecl', 1)[0], 'constant_body', 1)
+        return Call('constantDecl', [Call('\\new ConstantBody', [maybe(body, term)])])
+    if e[0] == 'InductiveDecl':
+        return Call('inductiveDecl', [mutual_inductive_body(tagged(e, 'InductiveDecl', 1)[0])])
+    raise Unsupported("unknown global declaration %s" % show(e[0]))
+
+
+def collect_arities(decls):
+    """Fill CTOR_ARITY from the InductiveDecls, before translating any term.
+
+    Two passes are needed because a term's constructor application can only be
+    un-curried once the arity of that constructor is known, and declarations
+    are listed dependents-first (a body may mention an inductive declared
+    further down the list).
+    """
+    CTOR_ARITY.clear()
+    for d in decls:
+        if not isinstance(d, list) or len(d) != 2:
+            raise ParseError("expected a (kername decl) entry, got %s" % show(d))
+        kn, decl = d
+        if not (isinstance(decl, list) and decl and decl[0] == 'InductiveDecl'):
+            continue
+        _, _, bodies = tagged(tagged(decl, 'InductiveDecl', 1)[0], 'mutual_inductive_body', 3)
+        for i, body in enumerate(expect_list(bodies, 'inductive bodies')):
+            ctors = tagged(body, 'one_inductive_body', 5)[3]
+            for j, c in enumerate(expect_list(ctors, 'constructors')):
+                nargs = tagged(c, 'constructor_body', 2)[1]
+                CTOR_ARITY[(sexpr_key(kn), str(i), str(j))] = int(nat(nargs).text)
+
+
+def program(e):
+    """`(Untyped <declarations> <Option term>)` -> (declarations doc, term doc)."""
+    if isinstance(e, list) and e and e[0] == 'Typed':
+        raise Unsupported("typed lambda-box (.tast): LambdaBox.ard's ASTType has only `untyped`")
+    decls, main = tagged(e, 'Untyped', 2)
+    collect_arities(expect_list(decls, 'global declarations'))
+    entries = []
+    for d in expect_list(decls, 'global declarations'):
+        if not isinstance(d, list) or len(d) != 2:
+            raise ParseError("expected a (kername decl) entry, got %s" % show(d))
+        entries.append(Tuple([kername(d[0]), global_decl(d[1])]))
+    if main == 'None':
+        raise Unsupported("the program has no entry term, but LBProgram requires one")
+    return ListLit(entries), term(tagged(main, 'Some', 1)[0])
+
+
+# ---------------------------------------------------------------------------
+# Emitting.
+# ---------------------------------------------------------------------------
+
+HEADER = """\
+-- GENERATED by test/tools/ast-to-arend -- do not edit.
+--
+-- Source: {source}
+--
+-- The lambda-box program of that Peregrine `.ast` file, rebuilt with the
+-- `LambdaBox.ard` constructors. Typechecking `progJava` prints the generated
+-- Java, exactly as the hand-written ExamplePrint.ard definitions do.
+"""
+
+IMPORTS = """\
+\\import Data.Bool
+\\import Data.Maybe
+\\import Data.String
+\\import Debug
+\\import LambdaBox
+\\import ToJava
+"""
+
+FOOTER = """\
+\\func progJava => putStrLn (compileProgram program)
+\\func progJavaLong => putStrLn (compileProgramWith targetLong program)
+"""
+
+
+def emit_builder(decls, main, source):
+    return '\n'.join([
+        HEADER.format(source=source),
+        IMPORTS,
+        '\\func progDecls : GlobalDeclarations =>',
+        render_top(decls),
+        '',
+        '\\func progTerm : LBTerm =>',
+        render_top(main),
+        '',
+        '\\func program : LBProgram => (progDecls, progTerm)',
+        '',
+        FOOTER,
+    ])
+
+
+def emit_literal(text, source, name):
+    return '\n'.join([
+        HEADER.format(source=source),
+        '\\import Data.String\n',
+        '\\func %s : String => %s' % (name, arend_string(text)),
+        '',
+    ])
+
+
+def main_():
+    ap = argparse.ArgumentParser(description="Peregrine lambda-box .ast -> Arend source")
+    ap.add_argument('file', nargs='?', help="the .ast file (default: stdin)")
+    ap.add_argument('--mode', choices=('builder', 'literal'), default='builder')
+    ap.add_argument('--name', default='progText',
+                    help="definition name in --mode=literal (default: progText)")
+    ap.add_argument('-o', '--output', help="write here instead of stdout")
+    args = ap.parse_args()
+
+    source = args.file or '<stdin>'
+    text = open(args.file, encoding='utf-8').read() if args.file else sys.stdin.read()
+
+    try:
+        if args.mode == 'literal':
+            out = emit_literal(text.strip(), source, args.name)
+        else:
+            out = emit_builder(*program(parse(text)), source=source)
+    except Unsupported as exc:
+        sys.stderr.write("ast-to-arend: %s: unsupported: %s\n" % (source, exc))
+        return 2
+    except ParseError as exc:
+        sys.stderr.write("ast-to-arend: %s: malformed .ast: %s\n" % (source, exc))
+        return 3
+
+    if args.output:
+        with open(args.output, 'w', encoding='utf-8') as f:
+            f.write(out)
+    else:
+        sys.stdout.write(out)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main_())

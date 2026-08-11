@@ -1,6 +1,8 @@
 /test/work/
 /lambox-to-java/bin/
 /lambox-to-java/src/Prog.java
+# Arend modules generated from external .ast files by test/tools/ast-to-arend.
+/lambox-to-java/src/Imported/
 /lambox-to-java/src/Playground.ard
 /out/
 /.idea/

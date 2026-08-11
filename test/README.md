@@ -14,6 +14,8 @@ One script per verb; scripts call scripts, no `case`/`if` dispatch tables.
     lib/log.sh          info / warn / die (everything to stderr)
     lib/timing.sh       timed <case> <backend> <stage> -- cmd...
     extract-arend.sh    <MODULE:DEF> [outfile] -> the artifact that definition printed
+    import-ast.sh       <file.ast> <Module>  external λ□ file -> Imported.<Module>
+    tools/ast-to-arend  the importer itself (Python 3): .ast -> Arend source
     build-java.sh       <case>  extract Prog.java + copy Rt.java + javac
     run-java.sh         <case>  build-java.sh + run-timed.sh
     build-c.sh          <case>  extract .ast/.attr + peregrine c + gcc
@@ -37,6 +39,7 @@ One script per verb; scripts call scripts, no `case`/`if` dispatch tables.
     test/build-c.sh matmul                                  # a single stage, by hand
     test/extract-arend.sh ExamplePrint:peanoJava            # print generated Java
     test/extract-arend.sh ExamplePrint:matMulSexpr prog.ast # write the λ□ s-expression
+    test/import-ast.sh cases/peano-ast/prog.ast PeanoAst   # import an external λ□ file
 
 ## How artifacts are obtained
 
@@ -54,6 +57,8 @@ print on subsequent runs.
 * A **development build** of Arend (`AREND_JAR`, e.g.
   `cli-1.11.0-full.jar`). The library relies on the new `String`
   implementation, which is not released yet (expected in 1.13).
+* Python 3 (`PYTHON`) for `tools/ast-to-arend`, needed only by the cases that
+  import an external `.ast`; stdlib only, nothing to install.
 * A JDK (`JAVA`, `JAVAC`); `JAVA_STACK=-Xss1g` is required, since evaluating a
   whole generated program during typechecking is stack-hungry.
 * The fixed Java runtime `Rt.java` (`Fn`, `Data`, `BOX`, the primitive int
@@ -115,7 +120,9 @@ cmx` emits no `.cmi`, so the interface is compiled separately).
 
 `BACKENDS` lists the backends the case supports; `example` and `peano` only
 declare `java`, since they return constructor data rather than a primitive int
-and have no C/OCaml driver yet.
+and have no C/OCaml driver yet. `matmul-ast` and `peano-ast` hold a `prog.ast`
+instead of pointing at a hand-written Arend program (see "Importing external λ□
+programs").
 
 ### Producers
 
@@ -126,8 +133,8 @@ program that comes from an s-expression file instead of Arend, declare
 
     AST_PRODUCER="cat $CASE_DIR/prog.ast"
 
-and, once the deserializer exists, point it at that instead — the backend
-scripts do not change.
+which is what the `matmul-ast` and `peano-ast` cases do — the backend scripts do
+not change.
 
 ### Attribute files
 
@@ -145,3 +152,63 @@ constructors only) — only non-nullary constructors become real blocks.
 This replaces the former hand-run `lambox-to-java/outc/build-and-run.sh` and
 `outocaml/build-and-run-ocaml.sh`, which required copy-pasting the printed
 `.ast`/`.attr` lines into `lambox-to-java/out*/` by hand.
+
+## Importing external λ□ programs
+
+A λ□ program produced elsewhere (Rocq/Lean/Agda via `peregrine extract`) arrives
+as an `.ast` s-expression file, but Arend has no file IO: our compiler runs
+*during typechecking*, so a program must reach it as Arend source.
+`test/tools/ast-to-arend` (Python 3, stdlib only) bridges that gap, and
+`import-ast.sh` wires it into the harness:
+
+    test/import-ast.sh cases/matmul-ast/prog.ast MatmulAst
+    test/extract-arend.sh Imported.MatmulAst:progJava
+
+The importer writes `lambox-to-java/src/Imported/<Module>.ard` — **generated,
+gitignored, overwritten on every run** — defining `progDecls`, `progTerm`,
+`program` and the printing entry points `progJava` / `progJavaLong`, so from
+there on an imported case is indistinguishable from a hand-written one. It
+prints nothing on stdout, which is why a case chains it in front of its
+extraction:
+
+    JAVA_PRODUCER="import-ast $CASE_DIR/prog.ast MatmulAst \
+                   && extract-arend Imported.MatmulAst:progJava$JAVA_DEF_SUFFIX"
+
+The grammar it reads is exactly the one `Serialize.ard` writes, read backwards,
+so `peano-ast` (whose `prog.ast` came from `ExamplePrint:peanoSexpr`) is a
+round-trip test of the two against each other — its generated `Prog.java` is
+byte-identical to `peano`'s. `matmul-ast` instead uses the real file the `matmul`
+case hands to Peregrine.
+
+Two things worth knowing:
+
+* **WORKAROUND: constructor application is un-curried on import.** Peregrine's build has
+  `cstr_as_blocks = false`: a `tConstruct` always carries an *empty* argument
+  list and its fields arrive as ordinary curried `tApp`s (`wrapTApp` in
+  `Serialize.ard` does the same outbound). `ToJava.ard`'s `construct` clause
+  needs the fields, and compiling the curried form yields Java that casts a
+  `Rt.Data` to `Rt.Fn` and does not even compile. The importer therefore
+  collects the fields back, using each constructor's declared `cstrNargs`, and
+  *rejects* a partially applied constructor (which would need eta-expansion the
+  generator cannot express).
+
+  This is a workaround in a *test tool* for a gap in the compiler, not a
+  property of the format: every real Rocq/Lean/Agda file hits the curried form
+  on every constructor, so `compileExpr` should handle it itself (recognize an
+  application spine headed by a `construct`, or eta-expand an under-applied
+  one). Both need the constructor arities, i.e. `GlobalDeclarations` threaded
+  into `compileExpr`, which currently discards even the `InductiveId`. Until
+  that is done, an imported program is only correct because the importer
+  re-saturated it. See `RESEARCH_AND_PLAN.md`.
+* **Anything outside our λ□ subset is a loud failure**, not a mistranslation:
+  `tVar`/`tEvar`/`tCoFix`/`tLazy`/`tForce`, non-`primInt` primitives and typed
+  λ□ (`.tast`) exit non-zero with a reason on stderr, since `LBTerm` has no
+  counterpart for them. That list is the point: it measures which fragment we
+  actually cover.
+
+The interface is deliberately language-agnostic (read an `.ast`, write Arend to
+stdout, non-zero exit + stderr on unsupported input), overridable via
+`AST_TO_AREND` and `PYTHON`, so the implementation can be replaced without
+touching a single case. `--mode=literal` emits the same file as one escaped
+single-line Arend string literal instead — Arend has no multi-line literals —
+which is what an in-Arend deserializer would consume.
