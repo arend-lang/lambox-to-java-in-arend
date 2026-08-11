@@ -50,9 +50,16 @@
 
 \func natMutual : MutualInductiveBody => \new MutualInductiveBody finite 0 ((\new OneInductiveBody "Nat" false IntoAny natCtors nil) :: nil)
 
+-- Order matters: EWellformed.v's `wf_glob` (and peregrine's `CheckWf.v`)
+-- checks each entry's body against only the *tail* of the list
+-- (`wf_global_decl Σ d` for `(kn,d)::Σ`), i.e. a declaration may only
+-- reference declarations that come AFTER it -- dependents first,
+-- dependencies last (the reverse of a normal "declare before use" order).
+-- With `Nat` listed first, `add`'s `case` could not find the inductive and
+-- peregrine rejected the exported program as "Case not exhaustive".
 \func decls : GlobalDeclarations =>
-  (\new Kername (mpFile nil) "Nat", inductiveDecl natMutual) ::
   (\new Kername (mpFile nil) "add", constantDecl (\new ConstantBody (just addFix))) ::
+  (\new Kername (mpFile nil) "Nat", inductiveDecl natMutual) ::
   nil
 
 -- 1 + 3

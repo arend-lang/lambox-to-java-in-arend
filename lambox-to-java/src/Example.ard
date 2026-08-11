@@ -119,16 +119,21 @@
                       (  (\new OneInductiveBody "Empty" true IntoPropSProp nil nil)
                         :: nil))
 
--- ---------- Environment (dependencies first) ----------
+-- ---------- Environment (dependents first) ----------
+--
+-- Order matters: EWellformed.v's `wf_glob` checks each entry's body against
+-- only the *tail* of the list (`wf_global_decl Σ d` for `(kn,d)::Σ`), i.e. a
+-- declaration may only reference declarations that come AFTER it -- the
+-- reverse of a normal "declare before use" order.
 
 \func decls : GlobalDeclarations =>
-  ((\new Kername mpMain  "NatBlock"),     natDecl)
-    :: (knWrap,    wrapDecl)
-         :: (knEmpty,   emptyDecl)
+  (knMain,    constantDecl (\new ConstantBody (just mainTerm)))
+    :: (knOpen,    constantDecl (\new ConstantBody (just openTerm)))
+         :: (knExtern,  constantDecl (\new ConstantBody nothing))    -- axiom: no body
               :: (knWrapped, constantDecl (\new ConstantBody (just wrappedTerm)))
-                   :: (knExtern,  constantDecl (\new ConstantBody nothing))    -- axiom: no body
-                        :: (knOpen,    constantDecl (\new ConstantBody (just openTerm)))
-                             :: (knMain,    constantDecl (\new ConstantBody (just mainTerm)))
+                   :: (knEmpty,   emptyDecl)
+                        :: (knWrap,    wrapDecl)
+                             :: ((\new Kername mpMain  "NatBlock"),     natDecl)
                                   :: nil
 
 -- ---------- The program ----------

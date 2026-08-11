@@ -162,7 +162,14 @@
   | constantDecl ConstantBody
   | inductiveDecl MutualInductiveBody
 
--- The first declarations to be added to the context are the deepest/first-consed in the list.
+-- ORDER: the list is newest-first, i.e. the HEAD is the declaration added
+-- LAST. MetaRocq's `EWellformed.wf_glob` (and peregrine's `CheckWf.v`) checks
+-- each entry's body against only the *tail* of the list (`wf_global_decl Σ d`
+-- for `(kn,d)::Σ`), so a declaration may only reference declarations that come
+-- AFTER it -- dependents first, dependencies last, the reverse of a normal
+-- "declare before use" order. Lookup (`lookup_env`) scans from the head, so
+-- getting this wrong is invisible to our own generator and only shows up when
+-- an exported program is checked by peregrine.
 \func GlobalDeclarations : \Type => Array (\Sigma Kername GlobalDecl)
 
 \func LBProgram : \Type => \Sigma GlobalDeclarations LBTerm

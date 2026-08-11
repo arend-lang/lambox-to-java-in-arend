@@ -212,3 +212,24 @@ stdout, non-zero exit + stderr on unsupported input), overridable via
 touching a single case. `--mode=literal` emits the same file as one escaped
 single-line Arend string literal instead — Arend has no multi-line literals —
 which is what an in-Arend deserializer would consume.
+
+## Checking an exported program against Peregrine
+
+A case that declares only the `java` backend never hands its `.ast` to
+Peregrine, so nothing checks that the program we *export* is well-formed λ□.
+The cheapest such check needs no driver and no attributes:
+
+    peregrine ast box  cases/peano-ast/prog.ast -o /dev/null   # wellformedness only
+    peregrine ast mut  cases/peano-ast/prog.ast -o /dev/null   # + CertiRocq's L1g
+
+Worth running after touching an example, because our own generator is much more
+permissive than `CheckWf.v`. The one failure this has already caught:
+
+* **Global declarations are ordered dependents-first.** `check_wf_glob` checks
+  each entry against only the *tail* of the list, so a declaration may
+  reference only entries that come AFTER it. `ExamplePeano.ard` and
+  `Example.ard` used the opposite ("declare before use") order, which made
+  `add`'s inductive invisible and produced the misleading
+  `Error while checking .add: Case not exhaustive`. Our own lookup scans from
+  the head and is order-insensitive, so the Java backend never noticed. The
+  invariant is now documented on `GlobalDeclarations` in `LambdaBox.ard`.
