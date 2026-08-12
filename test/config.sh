@@ -36,11 +36,10 @@ case $JAVA_INT in
 esac
 
 # --- Importing external λ□ programs -----------------------------------------
-# `.ast` files coming from Rocq/Lean/Agda are turned into Arend source by
-# test/tools/ast-to-arend (a harness tool, not part of the compiler -- its
-# output is validated by the Arend typechecker). The interface is deliberately
-# language-agnostic (a program reading an `.ast` and writing Arend to stdout),
-# so the implementation can be replaced without touching any case.
+# `.ast` files coming from Rocq/Lean/Agda are first normalized with Peregrine's
+# `ast box`, then turned into Arend source by test/tools/ast-to-arend (a
+# harness tool, not part of the compiler -- its output is validated by the
+# Arend typechecker). The importer itself is deliberately language-agnostic.
 : "${PYTHON:=python3}"
 : "${AST_TO_AREND:=$TEST_DIR/tools/ast-to-arend}"
 
@@ -82,8 +81,8 @@ require_tool() {
 # They write the artifact to stdout; `produce` redirects it to a file. This is
 # why the backends need no knowledge of where an artifact comes from.
 extract-arend() { "$TEST_DIR/extract-arend.sh" "$@"; }
-# `import-ast <file.ast> <Module>` writes Imported.<Module> and prints nothing,
-# so it chains in front of an extract-arend producer:
+# `import-ast <file.ast> <Module>` boxes the program, writes Imported.<Module>,
+# and prints nothing, so it chains in front of an extract-arend producer:
 #   JAVA_PRODUCER="import-ast $CASE_DIR/prog.ast Mutual && extract-arend Imported.Mutual:progJava"
 import-ast() { "$TEST_DIR/import-ast.sh" "$@"; }
 

@@ -122,15 +122,22 @@
 -- backend instead has this fixed table of axiom name -> runtime expression,
 -- since the runtime it targets (`runtime/Rt.java`) is ours. An axiom listed
 -- here compiles to the runtime constant, everything else to a throwing stub.
+-- Keys are fully mangled kernames: the Lean frontend places machine-Nat
+-- primitives under `Nat`, while the hand-written examples use root names.
+-- Keeping the module path avoids treating an unrelated `Foo.add` as Nat.add.
 \func javaAxioms {t : JavaTarget} : Array (\Sigma String JExpr) =>
   \let | op (nm : String) => jField rtRef ("PRIM_" ++ nm ++ "_" ++ primOpSuffix)
-  \in ("prim_add_int", op "ADD") ::
-      ("prim_mul_int", op "MUL") ::
-      ("prim_sub_int", op "SUB") ::
-      ("prim_eqb_int", op "EQB") ::
+  \in ("c___prim_add_int", op "ADD") ::
+      ("c___prim_mul_int", op "MUL") ::
+      ("c___prim_sub_int", op "SUB") ::
+      ("c___prim_eqb_int", op "EQB") ::
+      ("c__Nat__add", op "ADD") ::
+      ("c__Nat__mul", op "MUL") ::
+      ("c__Nat__sub", op "SUB") ::
+      ("c__Nat__beq", op "EQB") ::
       nil
 
--- Lookup by unqualified kername; the primitives live in the root module path.
+-- Lookup by fully mangled kername, including its module path.
 \func lookupAxiom (name : String) (tbl : Array (\Sigma String JExpr)) : Maybe JExpr \elim tbl
   | nil => nothing
   | e :: tbl => \case e.1 == name \with {
@@ -302,7 +309,7 @@
       | just body =>
         \let | o => compileExpr nil "" body
         \in constMethod name (appendStmts o.1 (jReturn o.2 :: nil))
-      | nothing => \case lookupAxiom kd.1.kerName javaAxioms \with {
+      | nothing => \case lookupAxiom name javaAxioms \with {
         | just impl => constMethod name (jReturn impl :: nil)
         | nothing =>
           constMethod name

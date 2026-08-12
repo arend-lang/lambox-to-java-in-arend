@@ -13,12 +13,13 @@ Arend source to stdout (or to `-o FILE`):
                              deserializer (option A) -- shares the escaping
                              logic with the builder mode.
 
-This is a *test-harness tool*, deliberately outside the verified compiler:
-its output is checked by the Arend typechecker, which is what makes an
-unverified importer acceptable here.
+This is a *test-harness tool*, deliberately outside the verified compiler. It
+expects Peregrine's constructor-block form (`peregrine ast box`); it translates
+that form structurally and checks constructor arities, but performs no semantic
+normalization. Its output is then checked by the Arend typechecker.
 
-The grammar mirrored is exactly the one `lambox-to-java/src/Serialize.ard`
-writes (which in turn mirrors Peregrine's own serializer), read in reverse.
+The grammar mirrored is Peregrine's constructor-block variant of the one
+`lambox-to-java/src/Serialize.ard` writes, read structurally in reverse.
 Anything outside our lambda-box subset (`tVar`, `tEvar`, `tCoFix`, `tLazy`,
 `tForce`, non-int primitives, typed lambda-box) is a loud failure: `LBTerm`
 in `LambdaBox.ard` has no counterpart, and silently mistranslating it would
@@ -394,7 +395,7 @@ def term(e):
     if head == 'tConst':
         return Call('const', [kername(tagged(e, 'tConst', 1)[0])])
     if head == 'tConstruct':
-        return construct(e, [])
+        return construct(e)
     if head == 'tCase':
         info, scrut, brs = tagged(e, 'tCase', 3)
         if not isinstance(info, list) or len(info) != 2:
@@ -426,47 +427,10 @@ def term(e):
 CTOR_ARITY = {}
 
 
-def spine(e):
-    """Flatten a curried `tApp` into (head, [arg, ...])."""
-    args = []
-    while isinstance(e, list) and e and e[0] == 'tApp':
-        f, a = tagged(e, 'tApp', 2)  # rejects a malformed tApp instead of looping
-        args.append(a)
-        e = f
-    args.reverse()
-    return e, args
-
-
 def application(e):
-    """A `tApp` spine, re-saturating a constructor at its head.
-
-    λ□ as Peregrine writes it has `cstr_as_blocks = false`: `tConstruct` always
-    carries an EMPTY argument list and its fields arrive as ordinary curried
-    `tApp`s (Serialize.ard's `wrapTApp` does the same in the other direction).
-    ToJava.ard's `construct` clause, by contrast, emits `new Rt.Data(tag,
-    fields)` from the args it is given and would compile a curried application
-    into `((Rt.Fn) someData).apply(...)`, which does not even typecheck as Java.
-    So the fields are collected back here, using the constructor's declared
-    `cstrNargs`; anything beyond them stays an ordinary application.
-
-    THIS IS A WORKAROUND, and it belongs to the compiler, not here: every λ□
-    file coming from Rocq/Lean/Agda uses the curried form for every single
-    constructor, so `compileExpr` should either recognize an application spine
-    headed by a `construct` or eta-expand an under-applied one. Both need the
-    constructor arities threaded in (`compileExpr` today discards even the
-    `InductiveId`). Until then an imported program is only compilable because
-    it was re-saturated here.
-    """
-    head, args = spine(e)
-    if isinstance(head, list) and head and head[0] == 'tConstruct':
-        doc = construct(head, args)
-        rest = args[len(field_args(head, args)):]
-    else:
-        doc = term(head)
-        rest = args
-    for a in rest:
-        doc = Call('app', [doc, term(a)])
-    return doc
+    """Translate one application node without changing its shape."""
+    f, a = tagged(e, 'tApp', 2)
+    return Call('app', [term(f), term(a)])
 
 
 def ctor_arity(e):
@@ -480,25 +444,14 @@ def ctor_arity(e):
     return CTOR_ARITY[key]
 
 
-def field_args(head, args):
-    """The prefix of `args` that are constructor fields, not applications."""
-    _, _, inline = tagged(head, 'tConstruct', 3)
-    inline = expect_list(inline, 'constructor arguments')
-    if inline:
-        # A cstr_as_blocks build already put the fields inside tConstruct.
-        return []
-    return args[:ctor_arity(head)]
-
-
-def construct(e, args):
+def construct(e):
     ind, idx, inline = tagged(e, 'tConstruct', 3)
-    fields = expect_list(inline, 'constructor arguments') or field_args(e, args)
+    fields = expect_list(inline, 'constructor arguments')
     arity = ctor_arity(e)
     if len(fields) != arity:
         raise Unsupported(
-            "constructor %s of %s is applied to %d of its %d field(s): a partial"
-            " constructor would need eta-expansion, which ToJava.ard's"
-            " `construct` clause cannot express"
+            "constructor %s of %s carries %d of its %d field(s): expected"
+            " saturated constructor-block form from `peregrine ast box`"
             % (show(idx), show(tagged(ind, 'inductive', 2)[0]), len(fields), arity))
     return Call('construct', [inductive_id(ind), nat(idx),
                               ListLit([term(a) for a in fields])])
@@ -563,10 +516,9 @@ def global_decl(e):
 def collect_arities(decls):
     """Fill CTOR_ARITY from the InductiveDecls, before translating any term.
 
-    Two passes are needed because a term's constructor application can only be
-    un-curried once the arity of that constructor is known, and declarations
-    are listed dependents-first (a body may mention an inductive declared
-    further down the list).
+    Two passes are needed to validate every constructor block before emitting
+    it, since declarations are listed dependents-first and a body may mention
+    an inductive declared further down the list.
     """
     CTOR_ARITY.clear()
     for d in decls:

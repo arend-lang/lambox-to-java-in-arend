@@ -6,7 +6,8 @@
 # prog.ast is the file the `matmul` case hands to Peregrine, i.e. real
 # Peregrine input, exercising every construct the C backend sees: tFix, tCase
 # with several branches, tPrim, curried tConstruct (cstr_as_blocks = false) and
-# body-less constant declarations for the four primitive-op axioms.
+# body-less constant declarations for the four primitive-op axioms. import-ast
+# normalizes the constructors through Peregrine's `ast box` before translation.
 #
 # Only the java backend: the C/OCaml ones would need this case's own copies of
 # matmul's attribute files and drivers, and the `matmul` case already covers

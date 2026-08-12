@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # import-ast.sh <ast-file> <Module> [--mode=builder|literal]
 #
-# Turns an external Peregrine λ□ `.ast` file into an Arend module of the
-# project, so that a program produced by Rocq/Lean/Agda can be fed to our
-# compiler (Arend has no file IO: a λ□ program must reach the typechecker as
-# Arend source).
+# Normalizes an external Peregrine λ□ `.ast` file to constructor-block form,
+# then turns it into an Arend module so that a program produced by Rocq/Lean/
+# Agda can be fed to our compiler (Arend has no file IO: a λ□ program must
+# reach the typechecker as Arend source).
 #
 # The module is written to $AREND_PROJECT/src/Imported/<Module>.ard and is
 # GENERATED -- gitignored, overwritten on every run. It defines `progDecls`,
@@ -27,15 +27,23 @@ module=$2
 shift 2
 
 [ -f "$ast" ] || die "no such .ast file: $ast"
+require_tool "$PEREGRINE" "set PEREGRINE to the peregrine executable"
 require_tool "$PYTHON" "set PYTHON to a Python 3 interpreter"
 [ -x "$AST_TO_AREND" ] || die "importer not executable: $AST_TO_AREND (set AST_TO_AREND)"
 
 dir="$AREND_PROJECT/src/Imported"
 mkdir -p "$dir"
 out="$dir/$module.ard"
+boxed=$(mktemp --suffix=.boxed.ast)
+trap 'rm -f "$boxed"' EXIT
 
-# On an unsupported construct the importer exits non-zero with a message on
-# stderr; `set -e` then stops the whole case, which is what we want -- a
-# half-written module would fail much less clearly during typechecking.
-"$PYTHON" "$AST_TO_AREND" "$@" -o "$out" "$ast"
-info "imported $ast -> Imported.$module ($(wc -l <"$out") lines)"
+# External `.ast` files use curried constructor applications. `ast box` runs
+# MetaRocq's verified constructors-as-blocks pass, producing the saturated
+# representation required by LambdaBox.ard and ToJava.ard. Python then only
+# translates and validates that representation; it performs no normalization.
+"$PEREGRINE" ast box "$ast" -o "$boxed" >/dev/null
+
+# On unsupported or non-block-form input the importer exits non-zero with a
+# message on stderr; `set -e` then stops the whole case, which is what we want.
+"$PYTHON" "$AST_TO_AREND" "$@" -o "$out" "$boxed"
+info "boxed and imported $ast -> Imported.$module ($(wc -l <"$out") lines)"

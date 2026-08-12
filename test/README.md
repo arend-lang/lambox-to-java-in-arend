@@ -120,9 +120,9 @@ cmx` emits no `.cmi`, so the interface is compiled separately).
 
 `BACKENDS` lists the backends the case supports; `example` and `peano` only
 declare `java`, since they return constructor data rather than a primitive int
-and have no C/OCaml driver yet. `matmul-ast` and `peano-ast` hold a `prog.ast`
-instead of pointing at a hand-written Arend program (see "Importing external λ□
-programs").
+and have no C/OCaml driver yet. `matmul-ast`, `peano-ast`, `lean-map`, and
+`lean-matmul` hold a `prog.ast` instead of pointing at a hand-written Arend
+program (see "Importing external λ□ programs").
 
 ### Producers
 
@@ -158,8 +158,9 @@ This replaces the former hand-run `lambox-to-java/outc/build-and-run.sh` and
 A λ□ program produced elsewhere (Rocq/Lean/Agda via `peregrine extract`) arrives
 as an `.ast` s-expression file, but Arend has no file IO: our compiler runs
 *during typechecking*, so a program must reach it as Arend source.
-`test/tools/ast-to-arend` (Python 3, stdlib only) bridges that gap, and
-`import-ast.sh` wires it into the harness:
+`import-ast.sh` first runs Peregrine's verified `ast box` normalization, then
+`test/tools/ast-to-arend` (Python 3, stdlib only) structurally translates the
+result into Arend source:
 
     test/import-ast.sh cases/matmul-ast/prog.ast MatmulAst
     test/extract-arend.sh Imported.MatmulAst:progJava
@@ -174,44 +175,63 @@ extraction:
     JAVA_PRODUCER="import-ast $CASE_DIR/prog.ast MatmulAst \
                    && extract-arend Imported.MatmulAst:progJava$JAVA_DEF_SUFFIX"
 
-The grammar it reads is exactly the one `Serialize.ard` writes, read backwards,
-so `peano-ast` (whose `prog.ast` came from `ExamplePrint:peanoSexpr`) is a
-round-trip test of the two against each other — its generated `Prog.java` is
-byte-identical to `peano`'s. `matmul-ast` instead uses the real file the `matmul`
-case hands to Peregrine.
+The grammar it reads is the constructor-block form of the one `Serialize.ard`
+writes. `peano-ast` starts from `ExamplePrint:peanoSexpr`, passes through
+Peregrine's normalization, and must still generate Java byte-identical to the
+hand-written `peano` case. `matmul-ast` instead starts from the real file the
+`matmul` case hands to Peregrine.
 
 Two things worth knowing:
 
-* **WORKAROUND: constructor application is un-curried on import.** Peregrine's build has
-  `cstr_as_blocks = false`: a `tConstruct` always carries an *empty* argument
-  list and its fields arrive as ordinary curried `tApp`s (`wrapTApp` in
-  `Serialize.ard` does the same outbound). `ToJava.ard`'s `construct` clause
-  needs the fields, and compiling the curried form yields Java that casts a
-  `Rt.Data` to `Rt.Fn` and does not even compile. The importer therefore
-  collects the fields back, using each constructor's declared `cstrNargs`, and
-  *rejects* a partially applied constructor (which would need eta-expansion the
-  generator cannot express).
-
-  This is a workaround in a *test tool* for a gap in the compiler, not a
-  property of the format: every real Rocq/Lean/Agda file hits the curried form
-  on every constructor, so `compileExpr` should handle it itself (recognize an
-  application spine headed by a `construct`, or eta-expand an under-applied
-  one). Both need the constructor arities, i.e. `GlobalDeclarations` threaded
-  into `compileExpr`, which currently discards even the `InductiveId`. Until
-  that is done, an imported program is only correct because the importer
-  re-saturated it. See `RESEARCH_AND_PLAN.md`.
+* **Constructor normalization belongs to Peregrine.** External `.ast` files
+  use curried constructor applications (`cstr_as_blocks = false`), whereas
+  `LambdaBox.ard` and `ToJava.ard` consume saturated constructor blocks.
+  `import-ast.sh` bridges these two pipeline stages with `peregrine ast box`,
+  which runs MetaRocq's verified constructors-as-blocks transformation. The
+  Python importer no longer reconstructs spines: it only checks every block
+  against its declared `cstrNargs` and rejects raw or malformed input loudly.
 * **Anything outside our λ□ subset is a loud failure**, not a mistranslation:
   `tVar`/`tEvar`/`tCoFix`/`tLazy`/`tForce`, non-`primInt` primitives and typed
   λ□ (`.tast`) exit non-zero with a reason on stderr, since `LBTerm` has no
   counterpart for them. That list is the point: it measures which fragment we
   actually cover.
 
-The interface is deliberately language-agnostic (read an `.ast`, write Arend to
-stdout, non-zero exit + stderr on unsupported input), overridable via
-`AST_TO_AREND` and `PYTHON`, so the implementation can be replaced without
-touching a single case. `--mode=literal` emits the same file as one escaped
-single-line Arend string literal instead — Arend has no multi-line literals —
-which is what an in-Arend deserializer would consume.
+The translator interface is deliberately language-agnostic (read a boxed
+`.ast`, write Arend to stdout, non-zero exit + stderr on unsupported input),
+overridable via `AST_TO_AREND` and `PYTHON`. `--mode=literal` emits the same
+file as one escaped single-line Arend string literal instead — Arend has no
+multi-line literals — which is what an in-Arend deserializer would consume.
+
+### Regenerating the Lean cases
+
+`lean-matmul` is an independent frontend test: `prog.lean` defines custom
+lists, constructs two 130x130 all-ones matrices, multiplies them, and sums every
+result cell. Its checked-in `prog.ast` is the otherwise unmodified output of
+lean-to-lambdabox. With that project available at `~/lean-to-lambdabox`,
+regenerate it from the project root with:
+
+    cd ~/lean-to-lambdabox
+    ~/.elan/bin/lake env lean \
+      ~/lambox-to-java-in-arend/test/cases/lean-matmul/prog.lean
+    cp prog.ast \
+      ~/lambox-to-java-in-arend/test/cases/lean-matmul/prog.ast
+
+The frontend emits machine arithmetic as the qualified axioms `Nat.add`,
+`Nat.mul`, `Nat.sub`, and `Nat.beq`. The Java axiom table realizes those names
+with the same runtime operations as the hand-written `prim_*_int` axioms; its
+lookup includes the module path so an unrelated `Foo.add` cannot match.
+
+`lean-map` is copied from Peregrine's official
+`test/lean/src/Map.lean` at the revision recorded in its `case.sh`; only the
+`#erase` output path is adapted. It doubles the Peano list `[1, 3, 5]`, testing
+higher-order application, recursive functions, pattern matching, and nested
+constructor results. Regenerate its artifact with:
+
+    cd ~/lean-to-lambdabox
+    ~/.elan/bin/lake env lean \
+      ~/lambox-to-java-in-arend/test/cases/lean-map/prog.lean
+    cp prog.ast \
+      ~/lambox-to-java-in-arend/test/cases/lean-map/prog.ast
 
 ## Checking an exported program against Peregrine
 

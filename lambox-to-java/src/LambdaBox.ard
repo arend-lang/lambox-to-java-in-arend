@@ -112,6 +112,8 @@
   | letIn BinderName LBTerm LBTerm  -- \let | x => 1 \in x + 1
   | app LBTerm LBTerm  -- f x
   | const Kername  --  a constant living in the environment
+  -- The array contains exactly all constructor fields (constructor-block form),
+  -- as produced for external programs by Peregrine's `ast box` pass.
   | construct InductiveId Nat {- index of the constructor used -} (Array LBTerm)  -- \data ...  (Array so ToJava can recurse inline via `args i`)
   | case InductiveId Nat {- number of parameters -} LBTerm (Array (\Sigma (Array BinderName) LBTerm))
   -- \case {Type, number of parameters} expr \with ...

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Peano addition, but taken from an EXTERNAL λ□ file (prog.ast) instead of a
-# hand-written Arend LBTerm: `import-ast` turns the s-expression back into an
-# Arend module (Imported.PeanoAst) which is then compiled as usual.
+# hand-written Arend LBTerm: `import-ast` first runs Peregrine's `ast box`, then
+# turns the normalized s-expression into Imported.PeanoAst for compilation.
 #
 # prog.ast here was produced by our own serializer
 # (`extract-arend.sh ExamplePrint:peanoSexpr`), so this case is a ROUND TRIP:
