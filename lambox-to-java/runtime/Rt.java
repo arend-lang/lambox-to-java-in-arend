@@ -30,23 +30,34 @@ public final class Rt {
 
     public Data(int tag, Object[] fields) { this.tag = tag; this.fields = fields; }
 
-    @Override public String toString() { return toString(0); }
-
-    public String toString(int indent) {
+    @Override public String toString() {
       StringBuilder sb = new StringBuilder();
+      render(sb, 0);
+      return sb.toString();
+    }
+
+    // Renders into ONE buffer. Returning a String per level instead (as this
+    // used to) copies the whole rendered subtree once per enclosing level, which
+    // is quadratic in the nesting depth: a list of 8000 elements -- the shape a
+    // `List` of that length has -- then took minutes to print, dwarfing the
+    // program that produced it. The text produced is unchanged.
+    public void render(StringBuilder sb, int indent) {
       sb.append(tag);
-      if (fields.length == 0) return sb.toString();
+      if (fields.length == 0) return;
       sb.append("(\n");
       for (int i = 0; i < fields.length; i++) {
-        for (int j = 0; j < indent + 1; j++) sb.append("  ");
+        indentBy(sb, indent + 1);
         Object f = fields[i];
-        if (f instanceof Data) { sb.append(((Data) f).toString(indent + 1)); } else { sb.append(String.valueOf(f)); }
+        if (f instanceof Data) { ((Data) f).render(sb, indent + 1); } else { sb.append(String.valueOf(f)); }
         if (i < fields.length - 1) sb.append(",");
         sb.append("\n");
       }
-      for (int j = 0; j < indent; j++) sb.append("  ");
+      indentBy(sb, indent);
       sb.append(")");
-      return sb.toString();
+    }
+
+    private static void indentBy(StringBuilder sb, int indent) {
+      for (int j = 0; j < indent; j++) sb.append("  ");
     }
   }
 
