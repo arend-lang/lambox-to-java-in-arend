@@ -1,4 +1,7 @@
+\import Arith.Nat
+\import Data.Bool
 \import Data.String
+\import Set
 
 -- =============================================================================
 -- Small String helpers used by the code generators (ToJava, Serialize).
@@ -56,6 +59,43 @@
     | 0 => "0"
     | suc _ => natToStrFuel n n
   }
+
+-- A collision-free encoding for source-language identifier bytes at the Java
+-- boundary. ASCII letters, digits and `_` stay readable. Every other byte is
+-- written as `$<decimal>$`; `$` itself is encoded too, so source text cannot
+-- imitate an escape. Non-ASCII UTF-8 is handled byte-for-byte in the same way.
+\func natRangeContains (start count n : Nat) : Bool \elim count
+  | 0 => false
+  | suc count => \case start == n \with {
+    | true => true
+    | false => natRangeContains (suc start) count n
+  }
+
+\func isJavaIdentByte (n : Nat) : Bool =>
+  \case natRangeContains 48 10 n \with {
+    | true => true
+    | false => \case natRangeContains 65 26 n \with {
+      | true => true
+      | false => \case natRangeContains 97 26 n \with {
+        | true => true
+        | false => n == 95
+      }
+    }
+  }
+
+\func oneByteString (b : Byte) : String =>
+  \new String { | bytes => b :: nil }
+
+\func javaIdentBytes (bs : Array Byte) : String \elim bs
+  | nil => ""
+  | b :: bs =>
+    \let | head : String => \case isJavaIdentByte b \with {
+      | true => oneByteString b
+      | false => "$" ++ natToStr b ++ "$"
+    }
+    \in head ++ javaIdentBytes bs
+
+\func javaIdentPart (s : String) : String => javaIdentBytes s.bytes
 
 -- `neg zero` is DEFINITIONALLY `pos zero` (see Int's constructor condition in
 -- Prelude.ard), so the `neg 0` clause must agree with `pos 0`'s -- no "-".
