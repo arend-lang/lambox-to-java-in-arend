@@ -22,9 +22,11 @@ One script per verb; scripts call scripts, no `case`/`if` dispatch tables.
     run-c.sh            <case>  build-c.sh + run-timed.sh
     build-ocaml.sh      <case>  extract .ast/.attr + peregrine ocaml + malfunction + ocamlopt
     run-ocaml.sh        <case>  build-ocaml.sh + run-timed.sh
+    run-eval.sh         <case>  peregrine eval: run the program, no codegen
     run-timed.sh        <case> <backend> -- cmd...   time, print and tee output.txt
     run-case.sh         <case> [backend...]          one case, its declared backends
     run-all.sh          [case...]                    every case, then summary.sh
+    bench.sh            <case> [variant...]          build once, run N times, compare
     run-ast-suite.sh    <name> <paths...>             external .ast corpus runner
     run-lean-benchmark-suite.sh [lean-repo]           close + run Lean benchmarks
     summary.sh          [case...]  timing table + every backend's output
@@ -122,6 +124,9 @@ A case is a directory under `cases/` with a `case.sh` holding *variables only*,
 plus any driver files it needs (`main.c` for C; `matmul_main.ml`,
 `prim_int63.ml/.mli` and the hand-written `matmul.mli` for OCaml — `malfunction
 cmx` emits no `.cmi`, so the interface is compiled separately).
+
+`matmul-bench` and `lean-matmul-peano` are the benchmark cases; see "Comparing
+the backends" below.
 
 `BACKENDS` lists the backends the case supports; `example` and `peano` only
 declare `java`, since they return constructor data rather than a primitive int
@@ -326,6 +331,121 @@ Two earlier findings from the same corpus:
 
 An axiom that is not realized stays an explicit throwing method: an unsupported
 operation must fail loudly rather than be papered over in the importer.
+
+## Comparing the backends (bench.sh)
+
+`bench.sh <case> [variant...]` builds each variant **once** and then runs it
+`BENCH_REPEATS` times (default 3), reporting the fastest and the median run:
+
+    MATMUL_SIZE=200 test/bench.sh matmul-bench
+    test/bench.sh lean-matmul-peano
+    test/bench.sh matmul-bench c java-long        # only these two variants
+
+A *variant* is a backend, except that the Java backend's two integer
+representations are reported separately as `java` (BigInteger) and `java-long`;
+with no variants given, the case's `BACKENDS` are used with `java` expanded into
+both. Rows are appended to `work/bench/<case>/results.tsv`, so runs at several
+sizes accumulate; the per-stage breakdown of a build stays in `work/timings.tsv`.
+
+Separating build from run is the whole point: in this pipeline they differ by
+two orders of magnitude, and only the run compares the *generated code*.
+
+### The two benchmark cases
+
+* `matmul-bench` — the `matmul` program (63-bit prim ints), with `MATMUL_SIZE`
+  substituting the size literal in a checked-in copy of the `.ast`. Unlike
+  `matmul`, **every** backend consumes that same file (`matmul` feeds Java from a
+  hand-written Arend term), and its attribute files are checked in rather than
+  extracted, since each extraction costs ~36 s of Arend startup and would
+  dominate the measurement.
+* `lean-matmul-peano` — the same workload over **unary** naturals, extracted
+  from Lean with `config { nat := .peano, extern := .preferLogical }`, therefore
+  axiom-free. It exists so `peregrine eval` can be included, and returns a
+  `Bool` (`Nat.beq sum (size^3)`) rather than the sum: a unary 8000 is an
+  8000-deep term, and every backend here indents a printed value by nesting
+  depth, so printing it would cost more than computing it.
+
+### Measurements (2026-08-13, `matmul-bench`, seconds, median of 3)
+
+| size | c | ocaml | java-long | java (BigInteger) |
+|---|---:|---:|---:|---:|
+| 130 | 0.54 | 1.03 | 1.57 | 9.56 |
+| 200 | 3.12 | 5.89 | 8.99 | 52.66 |
+| 260 | 11.35 | 16.50 | 24.35 | (not run) |
+
+and the corresponding build (code generation + compilation):
+
+| variant | build |
+|---|---:|
+| c | 0.5–1.1 s (`peregrine c` ~0.05 s + `gcc -O2`) |
+| ocaml | 0.3 s (`peregrine ocaml` ~0.01 s + `malfunction`/`ocamlopt`) |
+| java / java-long | 31–37 s, of which ~30 s is Arend (`javac` 1–2 s) |
+
+`lean-matmul-peano` at size 20, all five variants agreeing on `Bool.true`:
+
+| variant | run | build |
+|---|---:|---:|
+| c | 0.01 s | 1.05 s |
+| ocaml | 0.01 s | 0.31 s |
+| java-long | 0.30 s | 36.8 s |
+| java | 0.14 s | 34.7 s |
+| eval | 5.65 s | none |
+
+At this size the Java rows are dominated by JVM startup (~0.1 s, and the
+`java-long` run varies 0.15–0.32 s because of it), so read them as an upper
+bound rather than as compute time; the `matmul-bench` table above is the one to
+compare throughput on.
+
+What this says:
+
+* **Our generated Java is in the same league as the verified backends**:
+  `java-long` is 2.1–2.9x the C backend and 1.4–1.5x the OCaml one, and the
+  ratios are stable across sizes — so nothing in the generated shape degrades as
+  the workload grows. All four scale alike (~x16 from 130 to 260, i.e. quartic,
+  which is the algorithm: `lookupCol`/`nth` walk lists).
+* **BigInteger costs ~6x** over `long` on this integer-heavy program. That is the
+  price of the current default; see the int63 discussion above.
+* **Code generation, not generated code, is our cost**: ~30 s of Arend against
+  Peregrine's ~0.3–1 s for a whole backend. Most of it is the CLI's constant
+  `arend-lib` loading, and it is *per program*, so it dominates any corpus run.
+* **`peregrine eval` is an oracle, not a backend**: ~40x our Java and ~700x the
+  C backend on the same program — and that is at a size all three compiled
+  backends finish in milliseconds. It also cannot run most of our cases at all
+  (below).
+
+### What the evaluator can and cannot do
+
+`run-eval.sh` adds `eval` as a backend: `peregrine eval` runs the program
+instead of compiling it, so it is the reference value from Peregrine's own
+pipeline. Two limits, both worth knowing before trusting it:
+
+* **It cannot run a program with axioms.** `--attributes` remaps an axiom onto a
+  *native* C/OCaml symbol, which the evaluator has no implementation for, so the
+  `matmul` family fails with `Eprim: prim not found` (ANF evaluator) or
+  `wcbvEval;TConst;ecTyp: .prim_add_int` (`--anf false`). Hence the axiom-free
+  `lean-matmul-peano` case.
+* **`--fuel` is a Rocq unary `nat` allocated up front**, ~16 bytes per unit: on a
+  trivial program, fuel 1e6/1e7/1e8/1e9 costs 0.03/0.45/4.6/222 s and up to
+  1.6 GB *before evaluation starts*. `EVAL_FUEL` defaults to 1e7 for that
+  reason. Worse, **exhausted fuel is not an error**: the evaluator prints the
+  residual ANF program, which looks like a result. Check the output shape
+  (`constr ...`) before believing an eval answer.
+
+Peano scaling of the evaluator, for choosing a size: 10 → 1.5 s, 20 → 5.8 s,
+30 → 27 s (~1.2 GB).
+
+### The other Peregrine backends
+
+Not comparable here, for two different reasons:
+
+* `peregrine rust` and `peregrine elm` reject our input outright — *"Rust/Elm
+  extraction requires typed lambda box input"* — and `LambdaBox.ard` models
+  untyped λ□;
+* `peregrine wasm` and `peregrine cakeml` do compile `lean-matmul-peano`
+  successfully, but no runtime for either is installed on this machine (no
+  `node`/`deno`, no `cake`), so they cannot be run. CakeML's Peregrine pipeline
+  also still has `Admitted` obligations and an observational relation of `True`,
+  so it would be a performance data point only.
 
 ## Checking an exported program against Peregrine
 
