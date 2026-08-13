@@ -9,7 +9,7 @@
 # The module is written to $AREND_PROJECT/src/Imported/<Module>.ard and is
 # GENERATED -- gitignored, overwritten on every run. It defines `progDecls`,
 # `progTerm`, `program` and the printing entry points `progJava` /
-# `progJavaLong`, so afterwards
+# `progJavaBigInteger`, so afterwards
 #
 #   extract-arend Imported.<Module>:progJava
 #

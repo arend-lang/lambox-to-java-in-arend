@@ -70,12 +70,16 @@
 -- unsigned/signed views `Uint63`/`Sint63`. No Java type matches that, and our
 -- own AST does not either (LambdaBox.ard's `PrimModel primInt => Int` is
 -- unbounded). So both targets below are approximations, and the caller picks:
+--   * `targetLong`       -- java.lang.Long: Java's built-in 64-bit integer. The
+--     DEFAULT (see `compileProgram`), because it is the closer approximation:
+--     it is a fixed-width integer with wraparound, so only the width is wrong
+--     (2^64 instead of 2^63) and the sign convention differs, whereas
+--     `PrimInt63` reduction is unsigned/cyclic. It is also much faster.
 --   * `targetBigInteger` -- java.math.BigInteger: unbounded, never overflows,
 --     but boxed arithmetic and NO wraparound. Matches OUR AST's `Int`, not the
---     source's int63 nor the C/OCaml int63 runtimes.
---   * `targetLong`       -- java.lang.Long: Java's built-in 64-bit integer, much
---     faster, wraps -- but at 2^64, not 2^63 as the source semantics demand,
---     and signed, whereas `PrimInt63` reduction is unsigned/cyclic.
+--     source's int63 nor the C/OCaml int63 runtimes, so it is further from the
+--     source semantics than `targetLong`, not more conservative. Kept because
+--     unbounded arithmetic is occasionally useful when debugging.
 -- Both agree with the C backend (CertiRocq's prim_int63_*) and the OCaml one
 -- (unboxed OCaml `int`, cf. ExtrOCamlInt63) only while values stay well below
 -- 2^62, which holds for the current examples.
@@ -106,15 +110,15 @@
 
 \func rtData {t : JavaTarget} : JType => tClass (rt ++ "Data")
 
-\func targetBigInteger : JavaTarget \cowith
-  | runtimeClass => "Rt"
-  | intLit i => jNew (tClass "java.math.BigInteger") (jStringLit (intToStr i) :: nil)
-  | primOpSuffix => "INT"
-
 \func targetLong : JavaTarget \cowith
   | runtimeClass => "Rt"
   | intLit i => jCallStatic "Long.valueOf" (jLongLit i :: nil)
   | primOpSuffix => "LONG"
+
+\func targetBigInteger : JavaTarget \cowith
+  | runtimeClass => "Rt"
+  | intLit i => jNew (tClass "java.math.BigInteger") (jStringLit (intToStr i) :: nil)
+  | primOpSuffix => "INT"
 
 -- Realization of λ□ axioms (constants without a body) in the Java runtime.
 -- Peregrine does this per run via `--attributes` (see ExampleMatMul.ard's
@@ -379,11 +383,11 @@
   \new JClass "Prog" (Data.Array.++ (compileDecls p.1) (compileMain p.2))
 
 -- The generator and the printer, composed. The int representation is explicit
--- here; `compileProgram` below keeps BigInteger as the conservative default (no
--- silent overflow).
+-- here; `compileProgram` below fixes it to `targetLong`, the representation
+-- closest to λ□'s int63 (see `JavaTarget`).
 \func compileProgramWith (t : JavaTarget) (p : LBProgram) : String => printClass (compileClass p)
 
-\func compileProgram (p : LBProgram) : String => compileProgramWith targetBigInteger p
+\func compileProgram (p : LBProgram) : String => compileProgramWith targetLong p
 
 -- Print a generated program with `putStrLn` (Data.String -> console).
 -- \import Debug

@@ -90,14 +90,22 @@ Missing tools are reported by `require_tool` with a clear message.
 (the `JavaTarget` record in `ToJava.ard`); both variants use the same
 `Rt.java`:
 
-    test/run-case.sh matmul java               # JAVA_INT=bigint (default)
-    JAVA_INT=long test/run-case.sh matmul java
+    test/run-case.sh matmul java                 # JAVA_INT=long (default)
+    JAVA_INT=bigint test/run-case.sh matmul java
 
+* `long` — **the default.** `Long.valueOf(..L)` literals and `Rt.PRIM_*_LONG`,
+  i.e. Java's built-in 64-bit integers: wraps at 2^64, signed, and much faster
+  (matmul: ~1.1s vs ~8.1s run time).
 * `bigint` — `java.math.BigInteger` literals and `Rt.PRIM_*_INT`: unbounded,
   never overflows, but boxed arithmetic and no wraparound.
-* `long` — `Long.valueOf(..L)` literals and `Rt.PRIM_*_LONG`, i.e. Java's
-  built-in 64-bit integers: much faster (matmul: ~1.1s vs ~8.1s run time), wraps
-  at 2^64 and signed.
+
+`long` is the default because it is the *closer* approximation of the source
+semantics (below): a fixed-width integer with wraparound has the right shape and
+only the width is off by a bit, whereas BigInteger's unboundedness is a
+different kind of thing altogether — not a more conservative choice. `bigint` is
+kept for the occasional debugging run and is **no longer measured**: it was 6x
+slower on `matmul-bench` and 5% slower on `lean-deriv`, so it either loses or
+says nothing.
 
 Neither matches the source semantics: a λ□ `prim (primInt, _)` is a 63-bit
 machine integer with cyclic (mod 2^63) arithmetic — MetaRocq
@@ -114,9 +122,12 @@ then, comparing the `java` output against `c`/`ocaml` for a case whose values
 exceed 2^62 is expected to differ.
 
 A case declares its Java producer as `...:<name>Java$JAVA_DEF_SUFFIX`, and
-`config.sh` turns `JAVA_INT` into that suffix (`""` / `"Long"`), so the switch
-applies to every case without touching any backend script. Both variants build
-into the same `work/<case>/java` dir, i.e. the last run wins.
+`config.sh` turns `JAVA_INT` into that suffix (`""` for `long`, `"BigInteger"`
+for `bigint`), so the switch applies to every case without touching any backend
+script. The unsuffixed name is the default one throughout — `ToJava.ard`'s
+`compileProgram` fixes `targetLong`, and `compileProgramWith targetBigInteger`
+is what the `*JavaBigInteger` definitions call. Both variants build into the same
+`work/<case>/java` dir, i.e. the last run wins.
 
 ## Cases
 
@@ -179,7 +190,7 @@ result into Arend source:
 
 The importer writes `lambox-to-java/src/Imported/<Module>.ard` — **generated,
 gitignored, overwritten on every run** — defining `progDecls`, `progTerm`,
-`program` and the printing entry points `progJava` / `progJavaLong`, so from
+`program` and the printing entry points `progJava` / `progJavaBigInteger`, so from
 there on an imported case is indistinguishable from a hand-written one. It
 prints nothing on stdout, which is why a case chains it in front of its
 extraction:
@@ -341,13 +352,16 @@ operation must fail loudly rather than be papered over in the importer.
 
     MATMUL_SIZE=200 test/bench.sh matmul-bench
     test/bench.sh lean-matmul-peano
-    test/bench.sh matmul-bench c java-long        # only these two variants
+    test/bench.sh matmul-bench c java             # only these two variants
 
-A *variant* is a backend, except that the Java backend's two integer
-representations are reported separately as `java` (BigInteger) and `java-long`;
-with no variants given, the case's `BACKENDS` are used with `java` expanded into
-both. Rows are appended to `work/bench/<case>/results.tsv`, so runs at several
-sizes accumulate; the per-stage breakdown of a build stays in `work/timings.tsv`.
+A *variant* is a backend; with no variants given, the case's `BACKENDS` are used
+as they are. `java` means the default `long` representation (`java-long` is an
+explicit spelling of the same thing), and `java-bigint` is the BigInteger one —
+not measured any more, but still available for a one-off. Historical rows in the
+tables below predate this and label the two as `java-long` and `java`
+(BigInteger). Rows are appended to `work/bench/<case>/results.tsv`, so runs at
+several sizes accumulate; the per-stage breakdown of a build stays in
+`work/timings.tsv`.
 
 Separating build from run is the whole point: in this pipeline they differ by
 two orders of magnitude, and only the run compares the *generated code*.

@@ -3,7 +3,7 @@
 # Declarations only, no logic.
 
 BACKENDS="java"
-# $JAVA_DEF_SUFFIX comes from config.sh's JAVA_INT (empty / "Long").
+# $JAVA_DEF_SUFFIX comes from config.sh's JAVA_INT (empty / "BigInteger").
 JAVA_PRODUCER="extract-arend ExamplePrint:peanoJava$JAVA_DEF_SUFFIX"
 AST_PRODUCER="extract-arend ExamplePrint:peanoSexpr"
 # No C/OCaml drivers yet: the result is constructor data, not a primitive int.

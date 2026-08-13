@@ -576,7 +576,7 @@ IMPORTS = """\
 
 FOOTER = """\
 \\func progJava => putStrLn (compileProgram program)
-\\func progJavaLong => putStrLn (compileProgramWith targetLong program)
+\\func progJavaBigInteger => putStrLn (compileProgramWith targetBigInteger program)
 """
 
 

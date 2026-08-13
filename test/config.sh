@@ -29,16 +29,23 @@ ROOT="$(cd "$TEST_DIR/.." && pwd)"
 # generated; it is compiled next to every generated `Prog.java`.
 : "${JAVA_RUNTIME_DIR:=$AREND_PROJECT/runtime}"
 # Representation of λ□ primitive ints in the generated Java (the `JavaTarget`
-# record in ToJava.ard): `bigint` = java.math.BigInteger (unbounded, no wraparound),
-# `long` = Java's built-in 64-bit integer (faster, wraps at 2^64). It selects
-# the print-definition variant a case asks for, so
-#   JAVA_INT=long test/run-case.sh matmul java
-# builds the same program with `Long` arithmetic instead.
-: "${JAVA_INT:=bigint}"
+# record in ToJava.ard): `long` = Java's built-in 64-bit integer, `bigint` =
+# java.math.BigInteger (unbounded, no wraparound). It selects the
+# print-definition variant a case asks for, so
+#   JAVA_INT=bigint test/run-case.sh matmul java
+# builds the same program with BigInteger arithmetic instead.
+#
+# `long` is the DEFAULT because it is the closer approximation of the source
+# semantics: a λ□ `prim (primInt, _)` is a 63-bit machine integer with cyclic
+# arithmetic, so a fixed-width wrapping integer is the right shape and only the
+# width is off by one bit. `bigint` is neither faster nor more faithful -- it is
+# kept only because unbounded arithmetic is occasionally useful for debugging,
+# and it is no longer exercised by the benchmark or suite runners.
+: "${JAVA_INT:=long}"
 case $JAVA_INT in
-  bigint) JAVA_DEF_SUFFIX="" ;;
-  long)   JAVA_DEF_SUFFIX="Long" ;;
-  *)      die "JAVA_INT must be 'bigint' or 'long', got: $JAVA_INT" ;;
+  long)   JAVA_DEF_SUFFIX="" ;;
+  bigint) JAVA_DEF_SUFFIX="BigInteger" ;;
+  *)      die "JAVA_INT must be 'long' or 'bigint', got: $JAVA_INT" ;;
 esac
 
 # --- Importing external λ□ programs -----------------------------------------

@@ -11,6 +11,7 @@
 BACKENDS="java"
 AST_PRODUCER="cat $CASE_DIR/prog.ast"
 # The import step prints nothing on stdout, so it chains in front of the
-# extraction; $JAVA_DEF_SUFFIX comes from config.sh's JAVA_INT (empty/"Long").
+# extraction; $JAVA_DEF_SUFFIX comes from config.sh's JAVA_INT
+# (empty/"BigInteger").
 JAVA_PRODUCER="import-ast $CASE_DIR/prog.ast PeanoAst && extract-arend Imported.PeanoAst:progJava$JAVA_DEF_SUFFIX"
 NOTE="expected: 1(1(1(1(0)))), identical to the 'peano' case (importer round trip)"

@@ -17,21 +17,23 @@
 -- Only the example entry points are imported by name, since the modules
 -- otherwise share definition names (`decls`, `mainTerm`, ...).
 --
--- The `*JavaLong` variants use Java's built-in 64-bit integers for λ□ prims
--- instead of the default `BigInteger` (see `JavaTarget` in ToJava.ard); both
--- share the same runtime file, so only the printed program differs.
+-- A plain `*Java` uses the default int representation, Java's built-in 64-bit
+-- integers (`targetLong`, the closest approximation of λ□'s int63 -- see
+-- `JavaTarget` in ToJava.ard). The `*JavaBigInteger` variants use unbounded
+-- `BigInteger` instead; both share the same runtime file, so only the printed
+-- program differs.
 -- =============================================================================
 
 \func exampleJava => putStrLn (compileProgram testProgram)
-\func exampleJavaLong => putStrLn (compileProgramWith targetLong testProgram)
+\func exampleJavaBigInteger => putStrLn (compileProgramWith targetBigInteger testProgram)
 \func exampleSexpr => putStrLn (LambdaBoxToSrting testProgram)
 
 \func peanoJava => putStrLn (compileProgram addProgram)
-\func peanoJavaLong => putStrLn (compileProgramWith targetLong addProgram)
+\func peanoJavaBigInteger => putStrLn (compileProgramWith targetBigInteger addProgram)
 \func peanoSexpr => putStrLn (LambdaBoxToSrting addProgram)
 
 \func matMulJava => putStrLn (compileProgram matMulProgram)
-\func matMulJavaLong => putStrLn (compileProgramWith targetLong matMulProgram)
+\func matMulJavaBigInteger => putStrLn (compileProgramWith targetBigInteger matMulProgram)
 \func matMulSexpr => putStrLn (LambdaBoxToSrting matMulProgram)
 \func matMulAttrsCText => putStrLn (AttributesToString matMulAttrsC)
 \func matMulAttrsOCamlText => putStrLn (AttributesToString matMulAttrsOCaml)

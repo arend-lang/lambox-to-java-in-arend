@@ -7,17 +7,21 @@
 # generating the Java takes ~40 s of Arend, running it ~1 s -- so a single
 # wall-clock number per backend would hide which of them is being compared.
 #
-# A "variant" is a backend, except that the Java backend has two integer
-# representations (JAVA_INT in config.sh) and both are interesting:
+# A "variant" is a backend, plus one alias for the Java backend's other integer
+# representation (JAVA_INT in config.sh):
 #
-#   java        Java, λ□ primitive ints as java.math.BigInteger
-#   java-long   Java, λ□ primitive ints as Java's 64-bit long
-#   c           Peregrine's C backend (CertiRocq, gcc -O2)
-#   ocaml       Peregrine's OCaml backend (Malfunction, ocamlopt)
-#   eval        Peregrine's own evaluator: no code generation, no compilation
+#   java          Java, λ□ primitive ints as Java's 64-bit long (the default)
+#   java-long     the same thing, spelled explicitly
+#   java-bigint   Java, λ□ primitive ints as java.math.BigInteger
+#   c             Peregrine's C backend (CertiRocq, gcc -O2)
+#   ocaml         Peregrine's OCaml backend (Malfunction, ocamlopt)
+#   eval          Peregrine's own evaluator: no code generation, no compilation
 #
-# With no variants given, every backend the case declares is used, with the Java
-# one expanded into both representations.
+# With no variants given, every backend the case declares is used, once. Only
+# `long` is measured: it is the closer approximation of λ□'s 63-bit primitive
+# ints, and BigInteger was never a candidate representation -- it was measured
+# 6x slower on matmul-bench and 5% slower on lean-deriv, i.e. it either loses or
+# says nothing. `java-bigint` remains available for an explicit one-off.
 #
 # Rows are APPENDED to work/bench/<case>/results.tsv, so a run at another size
 # extends the history instead of replacing it. The per-stage breakdown of a
@@ -35,12 +39,7 @@ shift
 
 variants=$*
 if [ -z "$variants" ]; then
-  for b in ${BACKENDS-}; do
-    case $b in
-      java) variants="$variants java java-long" ;;
-      *)    variants="$variants $b" ;;
-    esac
-  done
+  for b in ${BACKENDS-}; do variants="$variants $b"; done
 fi
 [ -n "$variants" ] || die "case $CASE_NAME declares no BACKENDS"
 
@@ -55,8 +54,8 @@ as_s() { awk -v ms="$1" 'BEGIN { printf "%.2f", ms / 1000 }'; }
 # Lower median; with the default three repetitions the distinction never arises.
 median() { sort -n | awk '{v[NR]=$1} END {print v[int((NR+1)/2)]}'; }
 
-backend_of()  { case $1 in java-long) echo java ;; *) echo "$1" ;; esac; }
-java_int_of() { case $1 in java-long) echo long ;; *) echo bigint ;; esac; }
+backend_of()  { case $1 in java-long|java-bigint) echo java ;; *) echo "$1" ;; esac; }
+java_int_of() { case $1 in java-bigint) echo bigint ;; *) echo long ;; esac; }
 
 # set_run_cmd <backend> -- fills the global array `cmd` with the command that
 # RUNS the already-built program. This is the one place the runners are
