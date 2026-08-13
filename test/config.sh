@@ -65,6 +65,21 @@ fi
 : "${OCAMLOPT:=ocamlopt}"
 : "${MALFUNCTION:=malfunction}"
 
+# --- Peregrine's evaluator (the `eval` backend) -----------------------------
+# `peregrine eval` runs the program instead of compiling it, so it is a
+# reference/oracle backend. Its default fuel (10000 steps) is far too small for
+# anything but a toy, but overshooting is NOT free: fuel is a Rocq `nat`, i.e. a
+# unary number the evaluator allocates up front, ~16 bytes per unit. Measured on
+# the tiny `peano-ast` program, where the program itself is instant:
+#   fuel 1e6 -> 0.03 s / 29 MB, 1e7 -> 0.45 s / 171 MB, 1e8 -> 4.6 s / 1.6 GB,
+#   1e9 -> 222 s.
+# So ~1e7-1e8 is the practical ceiling, and it bounds which programs can be
+# evaluated at all. The overhead is constant per fuel value, so subtract it when
+# reading an eval timing.
+: "${EVAL_FUEL:=10000000}"
+# `true` = the ANF evaluator (Peregrine's default), `false` = the direct λ□ one.
+: "${EVAL_ANF:=true}"
+
 # --- Layout -----------------------------------------------------------------
 : "${WORK_DIR:=$TEST_DIR/work}"
 : "${CASES_DIR:=$TEST_DIR/cases}"
