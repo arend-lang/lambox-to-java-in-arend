@@ -41,7 +41,12 @@ trap 'rm -f "$boxed"' EXIT
 # MetaRocq's verified constructors-as-blocks pass, producing the saturated
 # representation required by LambdaBox.ard and ToJava.ard. Python then only
 # translates and validates that representation; it performs no normalization.
-"$PEREGRINE" ast box "$ast" -o "$boxed" >/dev/null
+#
+# $PEREGRINE_BOX_FLAGS (unquoted on purpose) additionally enables Peregrine's
+# optional middle-end passes, so a case can be measured with and without them
+# without touching this script; see config.sh.
+# shellcheck disable=SC2086
+"$PEREGRINE" ast box "$ast" $PEREGRINE_BOX_FLAGS -o "$boxed" >/dev/null
 
 # On unsupported or non-block-form input the importer exits non-zero with a
 # message on stderr; `set -e` then stops the whole case, which is what we want.

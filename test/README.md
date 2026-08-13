@@ -537,6 +537,33 @@ arity-specialized `Rt.Fn2`/`Fn3` plus compiling a saturated application spine to
 a single call is the change with the largest expected payoff, and it needs
 neither closure conversion nor a different input IR.
 
+### Peregrine's optional passes do not help (`PEREGRINE_BOX_FLAGS`)
+
+Before writing that pass, the free experiment: Peregrine's *optional* middle-end
+passes are flags on `peregrine ast box`, which `import-ast.sh` already runs, so
+`PEREGRINE_BOX_FLAGS` (see `config.sh`) enables them for any imported case
+without a generator change:
+
+    PEREGRINE_BOX_FLAGS="--betared=true --unboxing=true" ./run-case.sh lean-deriv java
+
+On `lean-deriv` this is a no-op in practice — output stays `40230090` and:
+
+| | AST bytes | `tCase` | `tApp` | closures in `Prog.java` | `.apply(` sites | run (best of 3) |
+|---|---:|---:|---:|---:|---:|---:|
+| default | 131739 | 102 | 2064 | 181 | 400 | 82.0 s |
+| `--betared --unboxing` | 130497 | 90 | 2065 | 180 | 399 | 78.5 s |
+
+The 4% is inside the noise — the *same* class file measured 82–205 s across three
+runs on this machine, so treat only best-of-N as meaningful. `--dearg-consts`/
+`--dearg-ctors` produce byte-identical output: dearging needs a typed AST and our
+imported `.ast` files are `Untyped`.
+
+The reason is structural: `betared` fires only on syntactic `(λx. e) a` redexes
+and `unboxing` removes *allocation* (hence `tCase`/`tConstruct` drop while `tApp`
+does not) — neither touches the per-argument application protocol, which is where
+the 84% is. The flag stays because it makes "input or backend?" a one-line
+experiment, and it becomes useful the day we can import λ□^T.
+
 ## Checking an exported program against Peregrine
 
 A case that declares only the `java` backend never hands its `.ast` to

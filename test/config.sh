@@ -58,6 +58,17 @@ esac
 
 # --- Peregrine / CertiRocq (C and OCaml backends) ---------------------------
 : "${PEREGRINE:=$HOME/peregrine-tool/_build/install/default/bin/peregrine}"
+# Extra flags for the `peregrine ast box` normalization run in import-ast.sh,
+# i.e. Peregrine's OPTIONAL middle-end passes (`doc/middleend.md`). They are
+# semantics-preserving, so turning them on only changes how much work reaches
+# our generator; word-split on purpose. Useful values:
+#   --betared=true    collapse (\x. e) a redexes  (default off)
+#   --unboxing=true   unbox 1-constructor/1-field inductives (default off)
+#   --dearg-consts=true --dearg-ctors=true   dead-argument removal -- REQUIRES a
+#     typed AST, so it is silently a no-op on the untyped `.ast` files we import
+#     (verified byte-identical output on lean-deriv).
+# See test/README.md for what these measured on lean-deriv.
+: "${PEREGRINE_BOX_FLAGS:=}"
 : "${CERTIROCQ_RT:=$HOME/.opam/peregrine/lib/coq/user-contrib/CertiRocq/Plugin/runtime}"
 # `malfunction` lives in the opam switch peregrine was built in and is usually
 # not on PATH; prepend that switch's bin dir instead of requiring `opam env`.
