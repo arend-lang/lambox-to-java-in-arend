@@ -162,4 +162,394 @@ public final class Rt {
       return new Fn() { public Object apply(Object y) { return lng(x) == lng(y) ? TRUE : FALSE; } };
     }
   };
+
+  // --- Lean machine-Nat operations -------------------------------------------
+  //
+  // lean-to-lambdabox erases `Nat` to λ□ primitive ints (`PrimModel .primInt :=
+  // BitVec 63`) and leaves the operations below as axioms, exactly like
+  // `Nat.add`/`mul`/`sub`/`beq` above. Same curried ABI, same two
+  // representations, same 63-bit caveat.
+  //
+  // A binary operation is written once by extending `Bin`: the outer `apply`
+  // returns the closure that takes the second argument.
+  private abstract static class Bin implements Fn {
+    abstract Object run(Object x, Object y);
+
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return Bin.this.run(x, y); } };
+    }
+  }
+
+  // Lean's `Nat.sub` is TRUNCATED subtraction: `a - b = 0` when `b >= a`. It
+  // therefore cannot share `PRIM_SUB_*`, which realizes the hand-written
+  // `prim_sub_int` axiom whose reference implementation is Peregrine's int63
+  // subtraction (wrapping, and freely negative). A shared realization produced
+  // wrong -- not crashing -- results: `const_fold` returned 2048 instead of
+  // 4772, because its `v-1` fell below zero and its `if v = 0` guard then never
+  // fired.
+  public static final Fn NAT_SUB_INT = new Bin() {
+    Object run(Object x, Object y) {
+      java.math.BigInteger d = num(x).subtract(num(y));
+      return d.signum() < 0 ? java.math.BigInteger.ZERO : d;
+    }
+  };
+
+  public static final Fn NAT_SUB_LONG = new Bin() {
+    Object run(Object x, Object y) {
+      long d = lng(x) - lng(y);
+      return Long.valueOf(d < 0L ? 0L : d);
+    }
+  };
+
+  // Result ABI of `Nat.decEq`/`decLe`/`decLt`: Lean's
+  //   inductive Decidable (p : Prop) | isFalse (h : Not p) | isTrue (h : p)
+  // so isFalse = tag 0, isTrue = tag 1, and the single field is the erased
+  // proof. TWO box fields are stored on purpose: the boxed λ□ artifacts
+  // produced by lean-to-lambdabox carry `npars = 0` on some `tCase` nodes and
+  // `npars = 1` on others, and a branch reads `fields[npars]`. The field is a
+  // proof, hence never inspected -- only its presence matters.
+  public static final Data IS_FALSE = new Data(0, new Object[]{ BOX, BOX });
+  public static final Data IS_TRUE = new Data(1, new Object[]{ BOX, BOX });
+
+  private static Data dec(boolean b) { return b ? IS_TRUE : IS_FALSE; }
+
+  // Lean total-function conventions, which differ from Java's: division and
+  // modulo by zero are `n / 0 = 0` and `n % 0 = n` rather than an exception.
+  public static final Fn PRIM_DIV_INT = new Bin() {
+    Object run(Object x, Object y) {
+      return num(y).signum() == 0 ? java.math.BigInteger.ZERO : num(x).divide(num(y));
+    }
+  };
+
+  public static final Fn PRIM_MOD_INT = new Bin() {
+    Object run(Object x, Object y) {
+      return num(y).signum() == 0 ? num(x) : num(x).mod(num(y));
+    }
+  };
+
+  public static final Fn PRIM_POW_INT = new Bin() {
+    Object run(Object x, Object y) { return num(x).pow(num(y).intValueExact()); }
+  };
+
+  public static final Fn PRIM_BLE_INT = new Bin() {
+    Object run(Object x, Object y) { return num(x).compareTo(num(y)) <= 0 ? TRUE : FALSE; }
+  };
+
+  public static final Fn PRIM_BLT_INT = new Bin() {
+    Object run(Object x, Object y) { return num(x).compareTo(num(y)) < 0 ? TRUE : FALSE; }
+  };
+
+  public static final Fn PRIM_DEC_EQ_INT = new Bin() {
+    Object run(Object x, Object y) { return dec(num(x).equals(num(y))); }
+  };
+
+  public static final Fn PRIM_DEC_LE_INT = new Bin() {
+    Object run(Object x, Object y) { return dec(num(x).compareTo(num(y)) <= 0); }
+  };
+
+  public static final Fn PRIM_DEC_LT_INT = new Bin() {
+    Object run(Object x, Object y) { return dec(num(x).compareTo(num(y)) < 0); }
+  };
+
+  public static final Fn PRIM_DIV_LONG = new Bin() {
+    Object run(Object x, Object y) {
+      return Long.valueOf(lng(y) == 0L ? 0L : lng(x) / lng(y));
+    }
+  };
+
+  public static final Fn PRIM_MOD_LONG = new Bin() {
+    Object run(Object x, Object y) {
+      return Long.valueOf(lng(y) == 0L ? lng(x) : lng(x) % lng(y));
+    }
+  };
+
+  // `Math.pow` is floating point, so the exponentiation is an explicit loop;
+  // it wraps like every other `*_LONG` operation.
+  public static final Fn PRIM_POW_LONG = new Bin() {
+    Object run(Object x, Object y) {
+      long base = lng(x), acc = 1L;
+      for (long i = lng(y); i > 0L; i--) acc = acc * base;
+      return Long.valueOf(acc);
+    }
+  };
+
+  public static final Fn PRIM_BLE_LONG = new Bin() {
+    Object run(Object x, Object y) { return lng(x) <= lng(y) ? TRUE : FALSE; }
+  };
+
+  public static final Fn PRIM_BLT_LONG = new Bin() {
+    Object run(Object x, Object y) { return lng(x) < lng(y) ? TRUE : FALSE; }
+  };
+
+  public static final Fn PRIM_DEC_EQ_LONG = new Bin() {
+    Object run(Object x, Object y) { return dec(lng(x) == lng(y)); }
+  };
+
+  public static final Fn PRIM_DEC_LE_LONG = new Bin() {
+    Object run(Object x, Object y) { return dec(lng(x) <= lng(y)); }
+  };
+
+  public static final Fn PRIM_DEC_LT_LONG = new Bin() {
+    Object run(Object x, Object y) { return dec(lng(x) < lng(y)); }
+  };
+
+  // --- Lean machine-Int operations -------------------------------------------
+  //
+  // With `config.int = .machine`, lean-to-lambdabox erases `Int` to the SAME λ□
+  // primitive int as `Nat` (a signed 63-bit value), which is why `Int.ofNat` is
+  // the identity here and `Int.negSucc n` is `-(n+1)`; its erasure of
+  // `Int.casesOn` relies on exactly that (`Erasure.lean`, machine-Int case).
+  //
+  // `ediv`/`emod` are Lean's EUCLIDEAN division: the remainder is never
+  // negative, and division by zero is total (`a / 0 = 0`, `a % 0 = a`). Neither
+  // matches Java's `/` and `%`, so both are computed from the remainder.
+  public static final Fn INT_OF_NAT = new Fn() {
+    public Object apply(Object x) { return x; }
+  };
+
+  public static final Fn INT_NEG_INT = new Fn() {
+    public Object apply(Object x) { return num(x).negate(); }
+  };
+
+  public static final Fn INT_NEG_SUCC_INT = new Fn() {
+    public Object apply(Object x) {
+      return num(x).add(java.math.BigInteger.ONE).negate();
+    }
+  };
+
+  public static final Fn INT_ADD_INT = new Bin() {
+    Object run(Object x, Object y) { return num(x).add(num(y)); }
+  };
+
+  public static final Fn INT_MUL_INT = new Bin() {
+    Object run(Object x, Object y) { return num(x).multiply(num(y)); }
+  };
+
+  public static final Fn INT_EMOD_INT = new Bin() {
+    Object run(Object x, Object y) {
+      return num(y).signum() == 0 ? num(x) : num(x).mod(num(y).abs());
+    }
+  };
+
+  public static final Fn INT_EDIV_INT = new Bin() {
+    Object run(Object x, Object y) {
+      if (num(y).signum() == 0) return java.math.BigInteger.ZERO;
+      java.math.BigInteger r = num(x).mod(num(y).abs());
+      return num(x).subtract(r).divide(num(y));
+    }
+  };
+
+  public static final Fn INT_DEC_EQ_INT = new Bin() {
+    Object run(Object x, Object y) { return dec(num(x).equals(num(y))); }
+  };
+
+  private static long emod(long a, long b) {
+    if (b == 0L) return a;
+    long r = a % b;
+    return r < 0L ? r + Math.abs(b) : r;
+  }
+
+  public static final Fn INT_NEG_LONG = new Fn() {
+    public Object apply(Object x) { return Long.valueOf(-lng(x)); }
+  };
+
+  public static final Fn INT_NEG_SUCC_LONG = new Fn() {
+    public Object apply(Object x) { return Long.valueOf(-(lng(x) + 1L)); }
+  };
+
+  public static final Fn INT_ADD_LONG = new Bin() {
+    Object run(Object x, Object y) { return Long.valueOf(lng(x) + lng(y)); }
+  };
+
+  public static final Fn INT_MUL_LONG = new Bin() {
+    Object run(Object x, Object y) { return Long.valueOf(lng(x) * lng(y)); }
+  };
+
+  public static final Fn INT_EMOD_LONG = new Bin() {
+    Object run(Object x, Object y) { return Long.valueOf(emod(lng(x), lng(y))); }
+  };
+
+  public static final Fn INT_EDIV_LONG = new Bin() {
+    Object run(Object x, Object y) {
+      long b = lng(y);
+      if (b == 0L) return Long.valueOf(0L);
+      long a = lng(x);
+      return Long.valueOf((a - emod(a, b)) / b);
+    }
+  };
+
+  public static final Fn INT_DEC_EQ_LONG = new Bin() {
+    Object run(Object x, Object y) { return dec(lng(x) == lng(y)); }
+  };
+
+  // --- Lean arrays -----------------------------------------------------------
+  //
+  // Lean's `Array` operations are axioms too (they are `@[extern]` in Lean's
+  // prelude, so erasure keeps no body). A λ□ value of type `Array α` is
+  // therefore whatever this runtime says it is, and the simplest choice is a
+  // plain Java `Object[]` -- distinguishable from every other runtime value,
+  // since a constructor is always a `Data`.
+  //
+  // PERSISTENT, NOT MUTABLE. Lean's `push`/`set!`/`swap` are destructive only
+  // because its compiler proves the array is used linearly; λ□ has no such
+  // information left, so each of them COPIES. That is O(n) per operation where
+  // Lean is O(1) -- correct, and the reason array-heavy benchmarks are slow
+  // here.
+  //
+  // Erased implicit arguments (the element type, and `Inhabited`/bounds proofs)
+  // are still passed, as `BOX`, so each operation below takes exactly as many
+  // curried arguments as Lean's signature has -- see the argument comments.
+  private interface Op {
+    Object run(Object[] args);
+  }
+
+  // `curry(n, op)` collects n arguments one `apply` at a time and then runs
+  // `op`. Each partial application gets its own array, so a partially applied
+  // operation stays a value that can be shared.
+  private static Fn curry(final int arity, final Op op) {
+    return curry(arity, op, new Object[0]);
+  }
+
+  private static Fn curry(final int arity, final Op op, final Object[] got) {
+    return new Fn() {
+      public Object apply(Object x) {
+        Object[] next = new Object[got.length + 1];
+        System.arraycopy(got, 0, next, 0, got.length);
+        next[got.length] = x;
+        if (next.length == arity) return op.run(next);
+        return curry(arity, op, next);
+      }
+    };
+  }
+
+  private static Object[] arr(Object x) { return (Object[]) x; }
+
+  // Both int representations are `java.lang.Number`s, so an index needs no
+  // target-specific version; only `Array.size`, which RETURNS a Nat, does.
+  private static int idx(Object x) { return ((Number) x).intValue(); }
+
+  private static Object[] copyWith(Object[] a, int extra) {
+    Object[] b = new Object[a.length + extra];
+    System.arraycopy(a, 0, b, 0, a.length);
+    return b;
+  }
+
+  private static void checkIndex(Object[] a, int i, String what) {
+    if (i < 0 || i >= a.length) {
+      throw new IndexOutOfBoundsException(
+        "Lean " + what + ": index " + i + " outside array of size " + a.length);
+    }
+  }
+
+  // `Array.mk {α} (toList : List α) : Array α`. Reading the list is the one
+  // place the runtime depends on the shape of a source inductive: `List.nil` is
+  // tag 0 and `List.cons` tag 1. The fields are taken from the END of the
+  // block, because a boxed λ□ constructor may or may not carry the inductive's
+  // erased parameter in front of them (lean-to-lambdabox is not consistent
+  // about `npars`, cf. IS_TRUE above).
+  public static final Fn ARRAY_MK = curry(2, new Op() {
+    public Object run(Object[] a) {
+      java.util.ArrayList<Object> out = new java.util.ArrayList<Object>();
+      Object cur = a[1];
+      while (true) {
+        Data d = (Data) cur;
+        if (d.tag == 0) break;
+        out.add(d.fields[d.fields.length - 2]);
+        cur = d.fields[d.fields.length - 1];
+      }
+      return out.toArray();
+    }
+  });
+
+  // `Array.emptyWithCapacity {α} (c : Nat) : Array α` -- the capacity is an
+  // allocation hint with no observable effect, and this representation grows on
+  // demand, so it is ignored.
+  public static final Fn ARRAY_EMPTY_WITH_CAPACITY = curry(2, new Op() {
+    public Object run(Object[] a) { return new Object[0]; }
+  });
+
+  // `Array.push {α} (a : Array α) (v : α) : Array α`
+  public static final Fn ARRAY_PUSH = curry(3, new Op() {
+    public Object run(Object[] a) {
+      Object[] b = copyWith(arr(a[1]), 1);
+      b[b.length - 1] = a[2];
+      return b;
+    }
+  });
+
+  // `Array.getInternal {α} (a : Array α) (i : Nat) (h : i < a.size) : α`
+  public static final Fn ARRAY_GET_INTERNAL = curry(4, new Op() {
+    public Object run(Object[] a) {
+      Object[] xs = arr(a[1]);
+      int i = idx(a[2]);
+      checkIndex(xs, i, "Array.getInternal");
+      return xs[i];
+    }
+  });
+
+  // `Array.get!Internal {α} [Inhabited α] (a : Array α) (i : Nat) : α`, which
+  // panics out of bounds rather than returning `default`, since the erased
+  // `Inhabited` instance carries no value we could return.
+  public static final Fn ARRAY_GET_BANG_INTERNAL = curry(4, new Op() {
+    public Object run(Object[] a) {
+      Object[] xs = arr(a[2]);
+      int i = idx(a[3]);
+      checkIndex(xs, i, "Array.get!Internal");
+      return xs[i];
+    }
+  });
+
+  // `Array.set! {α} (a : Array α) (i : Nat) (v : α) : Array α`
+  public static final Fn ARRAY_SET_BANG = curry(4, new Op() {
+    public Object run(Object[] a) {
+      Object[] xs = arr(a[1]);
+      int i = idx(a[2]);
+      checkIndex(xs, i, "Array.set!");
+      Object[] b = copyWith(xs, 0);
+      b[i] = a[3];
+      return b;
+    }
+  });
+
+  // `Array.swap {α} (xs : Array α) (i j : Nat) (hi : _) (hj : _) : Array α`
+  public static final Fn ARRAY_SWAP = curry(6, new Op() {
+    public Object run(Object[] a) {
+      Object[] xs = arr(a[1]);
+      int i = idx(a[2]), j = idx(a[3]);
+      checkIndex(xs, i, "Array.swap");
+      checkIndex(xs, j, "Array.swap");
+      Object[] b = copyWith(xs, 0);
+      Object t = b[i];
+      b[i] = b[j];
+      b[j] = t;
+      return b;
+    }
+  });
+
+  // `Array.size {α} (a : Array α) : Nat` -- the only array operation whose
+  // result is a Nat, hence the only one with a per-representation version.
+  public static final Fn ARRAY_SIZE_INT = curry(2, new Op() {
+    public Object run(Object[] a) {
+      return java.math.BigInteger.valueOf(arr(a[1]).length);
+    }
+  });
+
+  public static final Fn ARRAY_SIZE_LONG = curry(2, new Op() {
+    public Object run(Object[] a) { return Long.valueOf(arr(a[1]).length); }
+  });
+
+  // --- Lean's equality eliminators -------------------------------------------
+  //
+  //   @Eq.rec   {α} {a} {motive} (refl : motive a rfl) {b} (h : a = b)
+  //   @Eq.ndrec {α} {a} {motive} (m : motive a)         {b} (h : a = b)
+  //
+  // Both have SIX arguments, of which only the fourth is computational -- the
+  // others are a type, two endpoints, a motive and a proof, all erased to `BOX`
+  // but still passed. Rewriting along an equality does nothing at runtime, so
+  // the realization returns that fourth argument unchanged. Over-application
+  // (the result is itself a function) works because the returned value is then
+  // applied by the enclosing `app` node, as usual.
+  public static final Fn EQ_REC = curry(6, new Op() {
+    public Object run(Object[] a) { return a[3]; }
+  });
 }

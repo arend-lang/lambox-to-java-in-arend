@@ -127,14 +127,54 @@
 -- Keeping the module path avoids treating an unrelated `Foo.add` as Nat.add.
 \func javaAxioms {t : JavaTarget} : Array (\Sigma String JExpr) =>
   \let | op (nm : String) => jField rtRef ("PRIM_" ++ nm ++ "_" ++ primOpSuffix)
+       -- An operation that neither takes nor returns a λ□ primitive int is the
+       -- same in both representations, so it has ONE runtime constant.
+       | fixed (nm : String) => jField rtRef nm
   \in ("c___prim_add_int", op "ADD") ::
       ("c___prim_mul_int", op "MUL") ::
       ("c___prim_sub_int", op "SUB") ::
       ("c___prim_eqb_int", op "EQB") ::
       ("c__Nat__add", op "ADD") ::
       ("c__Nat__mul", op "MUL") ::
-      ("c__Nat__sub", op "SUB") ::
+      -- NOT `op "SUB"`: Lean's Nat subtraction truncates at zero, while
+      -- `prim_sub_int` is Peregrine's wrapping int63 subtraction.
+      ("c__Nat__sub", jField rtRef ("NAT_SUB_" ++ primOpSuffix)) ::
       ("c__Nat__beq", op "EQB") ::
+      -- The rest of the machine-Nat operations lean-to-lambdabox leaves as
+      -- axioms. `div`/`mod` follow Lean's total conventions and
+      -- `decEq`/`decLe`/`decLt` return `Decidable`, not `Bool` (see Rt.java).
+      ("c__Nat__div", op "DIV") ::
+      ("c__Nat__mod", op "MOD") ::
+      ("c__Nat__pow", op "POW") ::
+      ("c__Nat__ble", op "BLE") ::
+      ("c__Nat__blt", op "BLT") ::
+      ("c__Nat__decEq", op "DEC_EQ") ::
+      ("c__Nat__decLe", op "DEC_LE") ::
+      ("c__Nat__decLt", op "DEC_LT") ::
+      -- Lean's machine-`Int` operations. `Int` erases to the same λ□ primitive
+      -- int as `Nat`, so `ofNat` is the identity in both representations.
+      ("c__Int__ofNat", fixed "INT_OF_NAT") ::
+      ("c__Int__negSucc", jField rtRef ("INT_NEG_SUCC_" ++ primOpSuffix)) ::
+      ("c__Int__neg", jField rtRef ("INT_NEG_" ++ primOpSuffix)) ::
+      ("c__Int__add", jField rtRef ("INT_ADD_" ++ primOpSuffix)) ::
+      ("c__Int__mul", jField rtRef ("INT_MUL_" ++ primOpSuffix)) ::
+      ("c__Int__ediv", jField rtRef ("INT_EDIV_" ++ primOpSuffix)) ::
+      ("c__Int__emod", jField rtRef ("INT_EMOD_" ++ primOpSuffix)) ::
+      ("c__Int__decEq", jField rtRef ("INT_DEC_EQ_" ++ primOpSuffix)) ::
+      -- Lean's `Array` operations (`@[extern]`, so erasure keeps no body). Only
+      -- `size` returns a Nat, hence only it depends on the representation. The
+      -- Lean frontend writes `!` in a name as `_u33`.
+      ("c__Array__mk", fixed "ARRAY_MK") ::
+      ("c__Array__emptyWithCapacity", fixed "ARRAY_EMPTY_WITH_CAPACITY") ::
+      ("c__Array__push", fixed "ARRAY_PUSH") ::
+      ("c__Array__getInternal", fixed "ARRAY_GET_INTERNAL") ::
+      ("c__Array__get_u33Internal", fixed "ARRAY_GET_BANG_INTERNAL") ::
+      ("c__Array__set_u33", fixed "ARRAY_SET_BANG") ::
+      ("c__Array__swap", fixed "ARRAY_SWAP") ::
+      ("c__Array__size", jField rtRef ("ARRAY_SIZE_" ++ primOpSuffix)) ::
+      -- Rewriting along an equality is the identity at runtime.
+      ("c__Eq__rec", fixed "EQ_REC") ::
+      ("c__Eq__ndrec", fixed "EQ_REC") ::
       nil
 
 -- Lookup by fully mangled kername, including its module path.
@@ -171,22 +211,20 @@
 -- The statements of a sequence of child results, in order.
 \func concatStmts (rs : Array Out) : Array JStmt => concatStmtBlocks (map (\lam r => r.1) rs)
 
--- Kername -> Java method name. Identifiers arriving from the source are assumed
--- to be valid Java identifiers already; real sanitization (replacing illegal
--- characters) would need byte/char-level rewriting and belongs at the
--- host/extension boundary.
+-- Kername -> Java method name. Every source component is encoded at this one
+-- boundary; the fixed separators and leading `c_` are legal by construction.
 \func joinDirs (ds : Array String) : String \elim ds
   | nil => ""
-  | d :: nil => d
-  | d :: ds => d ++ "_" ++ joinDirs ds
+  | d :: nil => javaIdentPart d
+  | d :: ds => javaIdentPart d ++ "_" ++ joinDirs ds
 
 \func mangleModPath (mp : ModPath) : String \elim mp
   | mpFile dp => joinDirs dp
-  | mpBound dp id n => joinDirs dp ++ "_" ++ id ++ "_" ++ natToStr n
-  | mpDot mp id => mangleModPath mp ++ "_" ++ id
+  | mpBound dp id n => joinDirs dp ++ "_" ++ javaIdentPart id ++ "_" ++ natToStr n
+  | mpDot mp id => mangleModPath mp ++ "_" ++ javaIdentPart id
 
 \func mangleKername (k : Kername) : String =>
-  "c_" ++ mangleModPath k.kerModPath ++ "__" ++ k.kerName
+  "c_" ++ mangleModPath k.kerModPath ++ "__" ++ javaIdentPart k.kerName
 
 -- Bind a branch's fields to fresh locals, starting at field index `fieldIx`
 -- (= npars, to skip inductive parameters). Returns (bind-statements, extended env).
