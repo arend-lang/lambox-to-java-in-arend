@@ -19,6 +19,12 @@ ROOT="$(cd "$TEST_DIR/.." && pwd)"
 : "${JAVAC:=${JAVA}c}"
 # Evaluating a whole generated program during typechecking needs a big stack.
 : "${JAVA_STACK:=-Xss1g}"
+# So does RUNNING a generated program: the backend compiles λ□ `fix` to ordinary
+# recursive calls, with no tail-call elimination or trampoline, so a source-level
+# loop becomes a Java call chain as deep as the number of iterations. The JVM's
+# default thread stack (~1 MB) overflows on inputs a source language considers
+# small; several lean-to-lambdabox benchmarks need this.
+: "${JAVA_RUN_STACK:=-Xss512m}"
 # The fixed Java runtime (`Rt.java`: Fn, Data, BOX, PRIM_*) is hand-written, not
 # generated; it is compiled next to every generated `Prog.java`.
 : "${JAVA_RUNTIME_DIR:=$AREND_PROJECT/runtime}"

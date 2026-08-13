@@ -60,7 +60,10 @@ print on subsequent runs.
 * Python 3 (`PYTHON`) for `tools/ast-to-arend`, needed only by the cases that
   import an external `.ast`; stdlib only, nothing to install.
 * A JDK (`JAVA`, `JAVAC`); `JAVA_STACK=-Xss1g` is required, since evaluating a
-  whole generated program during typechecking is stack-hungry.
+  whole generated program during typechecking is stack-hungry, and
+  `JAVA_RUN_STACK=-Xss512m` is used when RUNNING a generated program: λ□ `fix`
+  compiles to plain recursion with no tail calls, so a source-level loop becomes
+  a call chain as deep as its iteration count.
 * The fixed Java runtime `Rt.java` (`Fn`, `Data`, `BOX`, the primitive int
   ops `PRIM_{ADD,MUL,SUB,EQB}_{INT,LONG}` and the `unbound`/`freeVar` failure
   helpers for ill-formed λ□ input) from
