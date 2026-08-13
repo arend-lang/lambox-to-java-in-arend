@@ -126,7 +126,9 @@ plus any driver files it needs (`main.c` for C; `matmul_main.ml`,
 cmx` emits no `.cmi`, so the interface is compiled separately).
 
 `matmul-bench` and `lean-matmul-peano` are the benchmark cases; see "Comparing
-the backends" below.
+the backends" below. `lean-deriv` is an *upstream* program (see "An upstream
+benchmark: lean-deriv"), and by far the slowest case — ~190 s to generate and
+~70 s to run — so `run-all.sh` now takes several minutes longer.
 
 `BACKENDS` lists the backends the case supports; `example` and `peano` only
 declare `java`, since they return constructor data rather than a primitive int
@@ -446,6 +448,80 @@ Not comparable here, for two different reasons:
   `node`/`deno`, no `cake`), so they cannot be run. CakeML's Peregrine pipeline
   also still has `Admitted` obligations and an observational relation of `True`,
   so it would be a performance data point only.
+
+## An upstream benchmark: lean-deriv
+
+`lean-deriv` is the first case that is **not ours**: `deriv.lean` is a verbatim
+copy of lean-to-lambdabox's `benchmarks/FromLeanCommon/deriv.lean` (itself from
+Lean 4's own code-generator benchmarks, revision 58701f8) and `prog.ast` is its
+unmodified λ□ output; only `prog.lean` is ours, and it merely closes the program
+over the input (10) the benchmark manifest uses. It differentiates `x^x` nested
+ten times and counts the nodes of the result: `40230090`.
+
+It is worth pinning as a case, rather than leaving it inside
+`run-lean-benchmark-suite.sh`, for two reasons: it is the only Lean-corpus
+program that costs *minutes*, and it is the first one for which a second backend
+could be made to run — so it is the first cross-backend measurement on a program
+nobody here wrote.
+
+### Making the OCaml backend run it
+
+`deriv` leaves 13 Lean primitives as axioms, and each backend resolves them
+differently:
+
+* **our Java** realizes them in the runtime (`javaAxioms` in `ToJava.ard` →
+  `runtime/Rt.java`), so it needs no attributes at all;
+* **Peregrine's OCaml backend** compiles an unrealized axiom `.Nat.add` to
+  `(global $Axioms $def__Nat_add)` — no attribute entry either, the module name
+  `Axioms` is a convention. The realizations are lean-to-lambdabox's own
+  (`nat.ml`, `int.ml`, `decidable.ml`, `eq.ml`, copied verbatim; our `axioms.ml`
+  is trimmed to those three includes since this program uses no Lean `Array`).
+  They are Zarith-based, hence `OCAMLOPT="ocamlfind ocamlopt"` plus
+  `OCAML_FLAGS`/`OCAML_LINK_FLAGS` in `case.sh` — `build-ocaml.sh` word-splits
+  the compiler and adds the link flags only when linking;
+* **`c` is impossible today**: `peregrine c` rejects the program outright
+  (*"Axioms found, use Extract Constant to realize them in C"*) and no C
+  realizations exist upstream — they would have to allocate (`Decidable` is a
+  constructor) through the CertiRocq GC. Likewise `eval` cannot run it.
+
+### Measurements (2026-08-13, median of 2)
+
+| variant | run | build | peak memory |
+|---|---:|---:|---:|
+| ocaml | 6.8 s | 1.1 s | 711 MB |
+| java-long | 69.5 s | 180.7 s | ~3.6 GB heap |
+| java (BigInteger) | 73.2 s | 195.3 s | ~3.6 GB heap |
+
+Both backends print `40230090`, which is also what Lean's own `#eval` gives.
+
+This is a **10x gap**, against 1.4–1.5x on `matmul-bench` — and the interesting
+part is what it is *not*:
+
+* **not the integer representation.** `java-long` is only 5% faster than
+  BigInteger here, where on `matmul-bench` it was 6x. So this program's cost is
+  not arithmetic.
+* **not lost sharing.** Our backend compiles a λ□ constant to a *method*, so
+  every reference re-evaluates its body, whereas Malfunction gets a top-level
+  `let` evaluated once. Memoizing all 55 constant methods in the generated
+  `Prog.java` by hand changed nothing measurable — the JIT already handles it.
+* **partly the literals.** `intLit` emits `new java.math.BigInteger("0")`, i.e.
+  a decimal string re-parsed at every *use*, inside the hottest loop; replacing
+  those by `BigInteger.valueOf(0L)` by hand gave 73 s → 65 s (~10%, matching
+  BigInteger's ~10% share of the profile). A cheap, real improvement — it needs a
+  guard for literals that do not fit a `long`, since `bigint` mode exists to be
+  unbounded.
+* **mostly the curried calls.** JFR execution sampling puts **84%** of samples in
+  the generated `Prog$…$1.apply` methods. Every λ□ application is one
+  `Rt.Fn.apply`, so an *n*-argument call allocates *n*-1 intermediate closures
+  and performs *n* virtual calls; Malfunction instead has n-ary `Mlambda`/`Mapply`
+  and OCaml compiles a saturated call directly. `matmul` hides this (a tight
+  arithmetic loop over lists), `deriv` does not (higher-order, allocation-heavy,
+  many multi-argument functions).
+
+So `deriv` turns the previously-cosmetic uncurrying question into a measured one:
+arity-specialized `Rt.Fn2`/`Fn3` plus compiling a saturated application spine to
+a single call is the change with the largest expected payoff, and it needs
+neither closure conversion nor a different input IR.
 
 ## Checking an exported program against Peregrine
 

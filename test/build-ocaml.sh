@@ -12,12 +12,18 @@
 # The generated module is named after $OCAML_MODULE because the driver refers to
 # it by name and the hand-written .mli must match: `malfunction cmx` produces no
 # .cmi of its own, so the interface is compiled separately beforehand.
+#
+# A case may need more than a bare compiler: $OCAMLOPT is word-split, so it can
+# be `ocamlfind ocamlopt`, with $OCAML_FLAGS added to every invocation and
+# $OCAML_LINK_FLAGS only to the link step (`-package`/`-linkpkg`, as lean-deriv
+# needs for Zarith).
 set -euo pipefail
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/load-case.sh" "$@"
 
 require_tool "$PEREGRINE" "set PEREGRINE to the peregrine binary"
-require_tool "$OCAMLOPT"
+read -r -a ocamlopt <<<"$OCAMLOPT ${OCAML_FLAGS-}"
+require_tool "${ocamlopt[0]}"
 require_tool "$MALFUNCTION" "comes from the opam switch peregrine was built in; set OPAM_SWITCH_BIN or MALFUNCTION"
 [ -n "${OCAML_DRIVER-}" ] || die "case $CASE_NAME declares no OCAML_DRIVER"
 [ -n "${OCAML_MODULE-}" ] || die "case $CASE_NAME declares no OCAML_MODULE"
@@ -40,10 +46,10 @@ done
 
 build_ocaml() (
   cd "$dir"
-  for f in ${OCAML_EXTRA-}; do "$OCAMLOPT" -c "$f"; done
+  for f in ${OCAML_EXTRA-}; do "${ocamlopt[@]}" -c "$f"; done
   "$MALFUNCTION" cmx "$OCAML_MODULE.mlf"
-  "$OCAMLOPT" -c "$OCAML_DRIVER"
-  "$OCAMLOPT" -o prog $link_units "$OCAML_MODULE.cmx" "${OCAML_DRIVER%.ml}.cmx"
+  "${ocamlopt[@]}" -c "$OCAML_DRIVER"
+  "${ocamlopt[@]}" ${OCAML_LINK_FLAGS-} -o prog $link_units "$OCAML_MODULE.cmx" "${OCAML_DRIVER%.ml}.cmx"
 )
 
 timed "$CASE_NAME" ocaml compile -- build_ocaml
