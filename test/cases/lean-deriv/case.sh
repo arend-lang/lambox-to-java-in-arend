@@ -42,4 +42,4 @@ OCAML_EXTRA="decidable.mli decidable.ml eq.mli eq.ml nat.mli nat.ml int.mli int.
 OCAMLOPT="ocamlfind ocamlopt"
 OCAML_FLAGS="-package zarith"
 OCAML_LINK_FLAGS="-linkpkg"
-NOTE="expected: 40230090; upstream Lean benchmark, ~98 s in Java vs ~6 s in OCaml"
+NOTE="expected: 40230090; upstream Lean benchmark, ~9 s in Java vs ~7 s in OCaml"

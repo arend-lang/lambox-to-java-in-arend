@@ -5,8 +5,12 @@
 # definition printed (the ExamplePrint.ard definitions are `putStrLn <text>`,
 # so typechecking one of them emits the generated artifact).
 #
-# The CLI is narrowed to one definition and deliberately never gets
-# `--serialize`: a binary cache would suppress the print on the next run.
+# The CLI is narrowed to one definition and runs with `--serialize`, so every
+# DEPENDENCY module (LambdaBox, ToJava, JavaPrint, ... and any uncached
+# arend-lib module) is persisted as a .arc binary cache and skipped on the
+# next run. A cache for the PRINT module itself would suppress the print,
+# so its .arc is deleted both before the run (a stale one would silence this
+# run) and after it (--serialize just wrote a fresh one).
 #
 # The printed text is delimited by the CLI's
 #   --- Typechecking <DEF> ---
@@ -29,11 +33,18 @@ mkdir -p "$WORK_DIR"
 log=$(mktemp "$WORK_DIR/extract-XXXXXX.log")
 trap 'rm -f "$log"' EXIT
 
+# The target's own module must never be satisfied from cache, or the
+# `putStrLn` side effect we harvest would be skipped.
+module=${target%%:*}
+arc="$AREND_PROJECT/bin/${module//.//}.arc"
+rm -f "$arc"
+
 start=$(date +%s%N)
 # The exit status is not a reliable success signal: the CLI also returns 1 when
 # it merely failed to load some unrelated binary cache. The `--- Done ---`
 # marker and the absence of [ERROR] lines are.
-(cd "$AREND_PROJECT" && "$JAVA" "$JAVA_STACK" -jar "$AREND_JAR" arend.yaml "$target") >"$log" 2>&1 || true
+(cd "$AREND_PROJECT" && "$JAVA" "$JAVA_STACK" -jar "$AREND_JAR" arend.yaml "$target" --serialize) >"$log" 2>&1 || true
+rm -f "$arc"
 info "extract $target took $(( ($(date +%s%N) - start) / 1000000 ))ms"
 
 if grep -q '^\[ERROR\]' "$log"; then

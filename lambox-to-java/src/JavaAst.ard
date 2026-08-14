@@ -140,6 +140,12 @@
   -- This node is temporary by design: closure conversion (step 5) replaces it
   -- with named `Closure_<path>` classes.
   | jAnonFn JType JIdent (Array JStmt)
+  -- The arity-2 and arity-3 forms of the same node: an anonymous class whose
+  -- single method is `public Object apply(Object p, Object q[, Object s])`,
+  -- implementing `Rt.Fn2`/`Rt.Fn3` (whose unary `apply` default provides
+  -- partial application). Produced for 2-/3-deep lambda nests; see ToJava.ard.
+  | jAnonFn2 JType JIdent JIdent (Array JStmt)
+  | jAnonFn3 JType JIdent JIdent JIdent (Array JStmt)
   -- A `String` literal; the printer is responsible for quoting and escaping.
   | jStringLit String
   -- A decimal `int` literal: constructor tags, field indices, array indices,

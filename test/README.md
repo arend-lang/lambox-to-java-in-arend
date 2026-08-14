@@ -53,10 +53,43 @@ form `putStrLn <text>`, so *typechecking* the definition prints it.
 text between the CLI's `--- Typechecking ... ---` and `--- Done (NNms) ---`
 lines, which replaces the old manual copy-paste into `lambox-to-java/out*/`.
 
-The CLI is never invoked with `--serialize`: a binary cache would suppress the
-print on subsequent runs.
+### Binary caches (`.arc`)
 
-## Arend 1.12
+The CLI is invoked *with* `--serialize`, so every dependency module —
+`LambdaBox`, `ToJava`, `JavaPrint`, ... and any not-yet-cached arend-lib
+module — is persisted as a `.arc` binary cache (`lambox-to-java/bin/`,
+gitignored) and loaded instead of re-typechecked on the next run. A cache for
+the *print module itself* would suppress the `putStrLn` we harvest, so
+`extract-arend.sh` deletes the target module's `.arc` both before the run (a
+stale one would silence it) and after (`--serialize` just wrote a fresh one).
+Caches invalidate automatically when a source file changes (verified: editing
+`ToJava.ard` re-typechecks it and regenerates its `.arc`); `-r/--recompile`
+forces a from-source run if a cache is ever suspected stale.
+
+This cut an extraction from ~36 s to ~21 s (~27 s since the 1.12 upgrade below).
+The remaining ~20 s is a *fixed* per-JVM-start cost — resolving and
+cache-loading the ~156-module arend-lib
+import cone (JVM+prelude alone is ~1.2 s) — which `.arc` files cannot remove;
+the target definition itself typechecks in ~100–250 ms. The CLI does accept
+several `MODULE:DEF` positionals in one run, so batching all of a case's
+extractions into a single JVM start would amortize that cost further (not
+wired into the harness yet).
+
+Note: arend-lib's own `bin/` caches are version-specific and have twice needed
+repair — first two stale files (`Category.Topos*`), then *all* of them after the
+1.12 upgrade (`36 loaded, 36 incomplete, 84 failed out of 156`, i.e. most of the
+library silently re-typechecked on every run, pushing extraction to ~57 s). The
+recipe is a **narrowed** serialize inside `~/.arend/libs/arend-lib`:
+
+    cli-1.12.0-full.jar arend.yaml --serialize Data.Array Data.String Set
+
+which rebuilds the whole import cone we use (afterwards: `157 loaded out of 157`,
+extraction back to ~27 s). A whole-library `--serialize` must **not** be used: it
+still fails on parse errors in `Category.Topos.Sheaf.Sub` and then aborts with a
+`NullPointerException` before writing anything. If the `Cannot load binary cache`
+warning reappears, redo the narrowed run.
+
+### Arend 1.12
 
 The project was migrated from Arend 1.11 to 1.12 (`lambox-to-java/arend.yaml`
 declares `langVersion: 1.12`, `AREND_JAR` defaults to `cli-1.12.0-full.jar`),
@@ -71,22 +104,11 @@ is taken and the result is applied to the second as an *index*, so it fails with
 
     \import Data.Array (map, mkArray, Big, ++ \as \infixr 5 ++A)
 
-and used infix (`xs ++A ys`) at the affected sites in `ToJava.ard`
-(`appendStmts`, `compileClass`). The alias is still needed instead of importing
+and used infix (`xs ++A ys`) at the three sites in `ToJava.ard` (`appendStmts`,
+`concatMembers`, `compileClass`). The alias is still needed instead of importing
 `++` directly, for the original reason: it would shadow `Data.String`'s `++`.
 The infix form of the qualified name (`xs Data.Array.++ ys`) also works, but the
 alias keeps the call sites readable.
-
-arend-lib's own `bin/` caches are version-specific, so after the upgrade most of
-the library was silently re-typechecked at every run (`36 loaded, 36 incomplete,
-84 failed out of 156`). Repair them with a **narrowed** serialize over the import
-cone we use, inside `~/.arend/libs/arend-lib`:
-
-    cli-1.12.0-full.jar arend.yaml --serialize Data.Array Data.String Set
-
-Afterwards: `157 loaded out of 157`. A whole-library `--serialize` must **not**
-be used — it still fails on parse errors in `Category.Topos.Sheaf.Sub` and then
-aborts with a `NullPointerException` before writing anything.
 
 ## Prerequisites
 
@@ -405,7 +427,7 @@ two orders of magnitude, and only the run compares the *generated code*.
   substituting the size literal in a checked-in copy of the `.ast`. Unlike
   `matmul`, **every** backend consumes that same file (`matmul` feeds Java from a
   hand-written Arend term), and its attribute files are checked in rather than
-  extracted, since each extraction costs ~36 s of Arend startup and would
+  extracted, since each extraction costs ~21 s of Arend startup and would
   dominate the measurement.
 * `lean-matmul-peano` — the same workload over **unary** naturals, extracted
   from Lean with `config { nat := .peano, extern := .preferLogical }`, therefore
@@ -596,6 +618,147 @@ and `unboxing` removes *allocation* (hence `tCase`/`tConstruct` drop while `tApp
 does not) — neither touches the per-argument application protocol, which is where
 the 84% is. The flag stays because it makes "input or backend?" a one-line
 experiment, and it becomes useful the day we can import λ□^T.
+
+### Spine flattening through a generic `Rt.app` loop makes things WORSE
+
+The next experiment on the list — flatten the left-nested binary spine
+`((f a) b) c` at compile time (Malfunction's `Mapply_u`) and emit one
+`Rt.app(f, new Object[]{a, b, c})` whose runtime loop does the same unary
+`apply` calls — was implemented (a `compileApp` spine collector mutual with
+`compileExpr`, ~25 lines, 1-argument spines unchanged), measured, and
+**reverted**:
+
+| run (quiet machine) | before | flattened |
+|---|---:|---:|
+| `matmul` | 2.0 s | 10–16 s (**~6x worse**) |
+| `lean-deriv` | 61–63 s | 94–127 s (**~1.5x worse**) |
+
+Outputs stayed correct (`2197000` / `40230090`; `lean-deriv` had 333 of 400
+call sites flattened). The reason it regresses is the same JVM mechanism that
+made the curried chains bearable: a nested
+`((Fn)((Fn)PRIM_ADD_LONG).apply(a)).apply(b)` is a chain of *separate call
+sites*, each with its own (often mono/bimorphic) inline cache, so the JIT
+inlines through them and escape analysis deletes the intermediate closure.
+`Rt.app`'s loop is ONE call site shared by every flattened application in the
+program — maximally megamorphic, never inlined — plus an `Object[]` allocation
+per call that can no longer be scalarized.
+
+Conclusion: call-site flattening only pays if it lands on an **arity-aware
+callee** — `Rt.Fn2`/`Fn3` with real `apply(Object, Object)` entry points
+generated for 2-/3-argument lambdas, so the flattened call is a direct
+interface call with register-passed arguments, not a generic loop. That
+(callee side + this same spine collector) is the actual next step; the array
+fallback should exist only for arity > N and partial application.
+
+### Arity-aware callees (`Rt.Fn2`/`Fn3` + `Rt.app2`/`app3`) — implemented, ~1.5x on deriv
+
+The callee-side change above is now in: `ToJava.ard` compiles a 2-/3-deep
+lambda nest to ONE anonymous class implementing `Rt.Fn2`/`Rt.Fn3`, whose real
+entry point is `apply(Object, Object[, Object])` — arguments in registers, no
+intermediate closure for a saturated call. A `default` unary `apply` on the
+interfaces provides partial application, so an Fn2/Fn3 is still an ordinary
+curried `Fn` to any caller that doesn't know better. The same spine collector
+that regressed with the generic loop now emits `Rt.app2(f, a, b)` /
+`Rt.app3(f, a, b, c)` — a static dispatcher that does one `instanceof` and one
+direct interface call when arities match, and falls back to the curried
+protocol (partial/over-application, unknown callees) otherwise; spines longer
+than 3 are chunked (`app3` then continue), matching the generator's Fn3-then-
+rest compilation of deeper nests. 1-argument spines and single lambdas are
+byte-for-byte unchanged. All `Bin`-based binary axioms (`PRIM_*`, `Nat.*`,
+`Int.*`) implement `Fn2`, so `Rt.app2(PRIM_ADD_LONG, a, b)` is one call.
+
+Measured (same machine, best of 3, outputs correct):
+
+| run | curried baseline | arity-aware |
+|---|---:|---:|
+| `matmul` | 2.0 s | 2.0 s (parity) |
+| `lean-deriv` | 61–63 s | **40.6 s (~1.5x faster)** |
+
+`lean-deriv`'s generated code: 333 call sites became `app2`/`app3`, closures
+split 54 `Fn2`/`Fn3` + 50 `Fn` (was 181 `Fn`), curried `.apply` sites 400 → 208.
+Unlike the generic `Rt.app` loop, this does not regress `matmul`: the
+arithmetic-heavy sites hit `Bin.apply(x, y)` directly instead of allocating an
+intermediate closure, and the fallback path inside `app2`/`app3` is the same
+chain the JIT was already inlining.
+
+### Inline constructor fields and chunked axioms — implemented, **deriv 40 s → 8.6 s**
+
+After the arity work, JFR (`settings=profile`) said the protocol was no longer
+the bottleneck (~13% of samples, was 84%): the cost was **allocation** — 31.6 GB
+in 45 s, ~700 MB/s, with GC pauses summing to only ~1 s. The top items were
+9.2 GB of `Object[]` (constructor fields), 3.3 GB of `Fn2`'s partial-application
+wrapper, 1.9+ GB inside `Rt.curry`, and a 1.58 GB live set for the result tree.
+Two changes address that, both measured on `lean-deriv` (best of 3, output
+`40230090` throughout):
+
+| run | arity-aware baseline | inline `Data` only | inline `Data` + chunked axioms |
+|---|---:|---:|---:|
+| `lean-deriv` | 40.6 s | 12.3–16.1 s | **8.6–9.1 s** |
+| `matmul` | 2.0 s | | 2.0 s (parity) |
+
+(The middle column was produced by recompiling the *same* `Prog.java` against a
+`Rt.java` with the axiom chunking reverted, so it isolates the two changes.)
+
+**These three optimizations are synergistic, and none of them stands alone.**
+That was measured properly afterwards, by *regenerating* `lean-deriv` and
+`matmul` from a tree containing only the inline-`Data` change (no `Fn2`/`Fn3`,
+no spine flattening, no axiom chunking) — as opposed to patching a `Prog.java`
+that had been generated *with* the arity work, which is what the column above
+and an earlier ablation did:
+
+| configuration (regenerated, best of 3, same machine) | `lean-deriv` | `matmul` |
+|---|---:|---:|
+| none (`HEAD` before this work) | 50.7–55.5 s | **1.5 s** |
+| inline `Data` only | 41.1–43.2 s (1.2x) | 2.3–2.4 s (**1.6x SLOWER**) |
+| all three | **6.7–10.1 s** (5–7x) | 1.7–2.0 s |
+
+So inline `Data` on its own buys only ~1.2x on `lean-deriv` and *costs* 1.6x on
+`matmul` (a six-field object with `arity` and three possibly-null slots is
+bigger than a two-field one, and `matmul`'s cons cells are built far more often
+than they are read). It pays only once the arity-aware calling protocol stops
+the allocation of intermediate closures — which is why the three changes belong
+together and are treated as one unit. The earlier per-optimization ablation
+numbers ("inline `Data` alone captures 75% of the win") were an artifact of
+patching generated code and are wrong.
+
+1. **`Rt.Data` carries its first three fields inline** (`tag`, `arity`, `f0`,
+   `f1`, `f2`, `rest`), instead of `tag` + one `Object[]`. That is ONE allocation
+   per constructor value rather than two (~40 B instead of ~56 B; OCaml's block
+   is 24 B), and every field read is a `getfield` at a constant offset rather
+   than a dependent array load with a bounds check. `ToJava.ard` emits
+   `new Rt.Data(tag, a, b)` for arities 0–3 and `Rt.data(tag, new Object[]{…})`
+   beyond them, and `dataField` resolves each statically-known index to
+   `f0`/`f1`/`f2`/`rest[i-3]` — so `Rt.Data.field(int)` is used only by
+   `toString`. On top of the arity work this is the biggest single step
+   (40 s → ~13 s); on its own it is worth almost nothing (see the table above).
+2. **High-arity axioms collect arguments in chunks of three.** `Rt.curry`'s
+   collector now implements `Fn3`, so a flattened `Rt.app3` call site fills it
+   three arguments at a time — one array and one closure per chunk instead of per
+   argument — with over-application handled explicitly (a chunk may overshoot the
+   arity). `EQ_REC` (arity 6, all but one argument erased) is hand-realized as
+   `Fn3`-returning-`Fn3`, so a rewrite costs two interface calls and no array at
+   all. And `Rt.app2` builds a genuine one-argument closure when handed an `Fn3`,
+   instead of going through two default unary `apply`s. Together: ~1.4x on top of
+   the `Data` change.
+
+With this, `lean-deriv` is **8.6–9.1 s against Peregrine's OCaml backend at
+7.0 s on the same machine — 1.25–1.3x**, where this case started at 10x.
+
+### Memoizing nullary constants is a REGRESSION — not implemented
+
+The remaining big allocation item in the profile was Lean's typeclass
+dictionaries: λ□ has no sharing of top-level definitions (`const k` is a call),
+so `mul`/`add` rebuild the whole `OfNat`/`instOfNat` chain and allocate a fresh
+`Decidable` just to test the literal pattern `Val 0`, up to ten times per call
+(>2 GB). Giving every constant a `private static Object memo_c_foo` cell filled
+on first call removes that allocation and still makes `lean-deriv` **slower**:
+41–43 s wall / 66 s CPU versus 38–40 s / 57 s (measured before the `Data` change).
+Escape analysis was already deleting those allocations, and the `apply` on a
+freshly built, type-exact dictionary is monomorphic and inlined — whereas a value
+loaded from a mutable `Object` field has unknown type, costing a real virtual
+dispatch plus a memory load at every use. The `jIfNull`/`jStaticField` AST nodes
+the experiment introduced were removed again with the rest of it; a future
+*typed* dictionary hoist would have to reintroduce them.
 
 ## Checking an exported program against Peregrine
 
