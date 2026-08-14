@@ -13,7 +13,10 @@ ROOT="$(cd "$TEST_DIR/.." && pwd)"
 # --- Arend ------------------------------------------------------------------
 # A *development* build of Arend is required: the library relies on the new
 # String implementation, which is not in a release yet (expected in 1.13).
-: "${AREND_JAR:=$HOME/arend-lang-bibin/cli/build/libs/cli-1.11.0-full.jar}"
+# The project's `arend.yaml` declares `langVersion: 1.12`, so the CLI must be a
+# 1.12 build -- an older jar rejects the library outright ("Incompatible
+# language version"), and arend-lib in ~/.arend is 1.12 as well.
+: "${AREND_JAR:=$HOME/arend-lang-bibin/cli/build/libs/cli-1.12.0-full.jar}"
 : "${AREND_PROJECT:=$ROOT/lambox-to-java}"
 : "${JAVA:=$HOME/.jdks/openjdk-26.0.1/bin/java}"
 : "${JAVAC:=${JAVA}c}"

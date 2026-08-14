@@ -1,8 +1,8 @@
 \import LambdaBox
 -- Only `map`/`mkArray`/`Big`: importing Data.Array wholesale would shadow
--- String's `++` with the Array one, so array append is spelled
--- `Data.Array.++` (once, in `appendStmts` below).
-\import Data.Array (map, mkArray, Big)
+-- String's `++` with the Array one, so array append is imported under the
+-- alias `++A` (used in `appendStmts` and `compileClass` below).
+\import Data.Array (map, mkArray, Big, ++ \as \infixr 5 ++A)
 \import Data.Bool
 \import Data.Maybe
 \import Data.String
@@ -207,8 +207,9 @@
 
 -- Array append and flattening of per-child results. Both come from Data.Array;
 -- neither calls compileExpr, so the recursion above stays in its own SCC.
--- `appendStmts` is the one place `Data.Array.++` is named (see the import).
-\func appendStmts (xs ys : Array JStmt) : Array JStmt => Data.Array.++ xs ys
+-- `appendStmts` is the main place the aliased array append `++A` is used (see
+-- the import).
+\func appendStmts (xs ys : Array JStmt) : Array JStmt => xs ++A ys
 
 \func concatStmtBlocks (bs : Array (Array JStmt)) : Array JStmt => Big appendStmts nil bs
 
@@ -380,7 +381,7 @@
 -- human-readable `toString`) and `BOX` come from the hand-written runtime class
 -- `runtime/Rt.java`, which must be compiled together with this output.
 \func compileClass {t : JavaTarget} (p : LBProgram) : JClass =>
-  \new JClass "Prog" (Data.Array.++ (compileDecls p.1) (compileMain p.2))
+  \new JClass "Prog" (compileDecls p.1 ++A compileMain p.2)
 
 -- The generator and the printer, composed. The int representation is explicit
 -- here; `compileProgram` below fixes it to `targetLong`, the representation

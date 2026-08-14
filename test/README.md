@@ -56,11 +56,44 @@ lines, which replaces the old manual copy-paste into `lambox-to-java/out*/`.
 The CLI is never invoked with `--serialize`: a binary cache would suppress the
 print on subsequent runs.
 
+## Arend 1.12
+
+The project was migrated from Arend 1.11 to 1.12 (`lambox-to-java/arend.yaml`
+declares `langVersion: 1.12`, `AREND_JAR` defaults to `cli-1.12.0-full.jar`),
+because the installed arend-lib in `~/.arend/libs` is now 1.12 and an older CLI
+rejects it outright ("Incompatible language version").
+
+One source change was needed, and it is a *syntax* change rather than a library
+one: **a qualified infix operator can no longer be applied in prefix form.**
+`Data.Array.++ xs ys` used to mean `xs ++ ys`; under 1.12 only the first argument
+is taken and the result is applied to the second as an *index*, so it fails with
+`Expected type: Fin xs.len`. Array append is therefore imported under an alias,
+
+    \import Data.Array (map, mkArray, Big, ++ \as \infixr 5 ++A)
+
+and used infix (`xs ++A ys`) at the affected sites in `ToJava.ard`
+(`appendStmts`, `compileClass`). The alias is still needed instead of importing
+`++` directly, for the original reason: it would shadow `Data.String`'s `++`.
+The infix form of the qualified name (`xs Data.Array.++ ys`) also works, but the
+alias keeps the call sites readable.
+
+arend-lib's own `bin/` caches are version-specific, so after the upgrade most of
+the library was silently re-typechecked at every run (`36 loaded, 36 incomplete,
+84 failed out of 156`). Repair them with a **narrowed** serialize over the import
+cone we use, inside `~/.arend/libs/arend-lib`:
+
+    cli-1.12.0-full.jar arend.yaml --serialize Data.Array Data.String Set
+
+Afterwards: `157 loaded out of 157`. A whole-library `--serialize` must **not**
+be used — it still fails on parse errors in `Category.Topos.Sheaf.Sub` and then
+aborts with a `NullPointerException` before writing anything.
+
 ## Prerequisites
 
 * A **development build** of Arend (`AREND_JAR`, e.g.
-  `cli-1.11.0-full.jar`). The library relies on the new `String`
-  implementation, which is not released yet (expected in 1.13).
+  `cli-1.12.0-full.jar`; it must match `arend.yaml`'s `langVersion: 1.12`). The
+  library relies on the new `String` implementation, which is not released yet
+  (expected in 1.13).
 * Python 3 (`PYTHON`) for `tools/ast-to-arend`, needed only by the cases that
   import an external `.ast`; stdlib only, nothing to install.
 * A JDK (`JAVA`, `JAVAC`); `JAVA_STACK=-Xss1g` is required, since evaluating a
