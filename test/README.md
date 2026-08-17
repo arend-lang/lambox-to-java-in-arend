@@ -1,9 +1,15 @@
 # Test harness
 
-Takes a λ□ program defined in Arend, produces the target code for each backend,
-compiles it, runs it, times every stage and prints the program's output.
-There are **no assertions** — correctness is judged by eye, with the backends'
-outputs next to each other.
+Takes a λ□ program defined in Arend (or a checked-in λ□ file), produces the target
+code for each backend, compiles it, runs it, times every stage and prints the
+program's output.
+
+The run scripts themselves still assert nothing — every output is printed, with
+the backends' outputs next to each other. Checking is a *separate* script:
+`check-case.sh`/`check-all.sh` compare the outputs a run left behind against each
+other and against the case's `EXPECTED` (for the upstream benchmarks, the value
+Lean's own compiler produces), and `run-all.sh` ends by calling it. See "The
+upstream benchmark corpus and differential checking".
 
 ## Layout
 
@@ -25,7 +31,9 @@ One script per verb; scripts call scripts, no `case`/`if` dispatch tables.
     run-eval.sh         <case>  peregrine eval: run the program, no codegen
     run-timed.sh        <case> <backend> -- cmd...   time, print and tee output.txt
     run-case.sh         <case> [backend...]          one case, its declared backends
-    run-all.sh          [case...]                    every case, then summary.sh
+    run-all.sh          [case...]                    every case, then summary + check
+    check-case.sh       <case> [backend...]  compare outputs to each other + EXPECTED
+    check-all.sh        [case...]            check-case.sh over the corpus, one verdict
     bench.sh            <case> [variant...]          build once, run N times, compare
     run-ast-suite.sh    <name> <paths...>             external .ast corpus runner
     run-lean-benchmark-suite.sh [lean-repo]           close + run Lean benchmarks
@@ -33,6 +41,10 @@ One script per verb; scripts call scripts, no `case`/`if` dispatch tables.
     case-backends.sh    <case>  the case's BACKENDS, one per line
     case-note.sh        <case>  the case's NOTE (expected result)
     cases/<case>/case.sh  declarative case description (variables only)
+    lean-ocaml-runtime/   Lean's own OCaml realizations of its axioms (verbatim
+                          upstream copies) + the case.sh fragment sharing them
+    lean-peano-drivers/   drivers for the axiom-free Lean cases, the only ones the
+                          C backend and the evaluator accept
     work/               gitignored scratch: work/<case>/<backend>/...
 
 ## Usage
@@ -44,6 +56,8 @@ One script per verb; scripts call scripts, no `case`/`if` dispatch tables.
     test/extract-arend.sh ExamplePrint:peanoJava            # print generated Java
     test/extract-arend.sh ExamplePrint:matMulSexpr prog.ast # write the λ□ s-expression
     test/import-ast.sh cases/peano-ast/prog.ast PeanoAst   # import an external λ□ file
+    test/check-all.sh                                       # verdict on the last run
+    test/run-case.sh lean-qsort && test/check-case.sh lean-qsort
 
 ## How artifacts are obtained
 
@@ -253,6 +267,12 @@ declare `java`, since they return constructor data rather than a primitive int
 and have no C/OCaml driver yet. `matmul-ast`, `peano-ast`, `lean-map`, and
 `lean-matmul` hold a `prog.ast` instead of pointing at a hand-written Arend
 program (see "Importing external λ□ programs").
+
+Seven cases are *upstream* Lean 4 code-generator benchmarks, none of them written
+by us — see "The upstream benchmark corpus" below. They are also where the
+`EXPECTED` variable and `check-case.sh` come from: a case may declare the value
+Lean itself computes, and the check compares every backend against it and against
+every other backend.
 
 ### Producers
 
@@ -915,6 +935,116 @@ The lesson generalizes: a code generator can cross this limit from a change that
 has nothing to do with performance, and the symptom (one hot method, a plausible
 story about allocation) looks exactly like an ordinary regression. `javap -c` on
 the hot class is the cheap check.
+
+## The upstream benchmark corpus and differential checking
+
+Until this round the corpus was thin in a way that had repeatedly misled us: ten
+cases, three of which (`matmul`, `matmul-ast`, `matmul-bench`) are the *same*
+generated program, and exactly one (`lean-deriv`) that we had not written
+ourselves. Seven cases now come from Lean 4's own code-generator benchmarks, as
+shipped by `lean-to-lambdabox` (`benchmarks/FromLeanCommon/`, revision `58701f8`):
+
+| case | what it stresses | backends | expected |
+|---|---|---|---|
+| `lean-deriv` | symbolic differentiation, higher-order | java, ocaml | 40230090 |
+| `lean-const-fold` | Nat arithmetic incl. truncated `sub` | java, ocaml | 6895932 |
+| `lean-binarytrees` | allocation / GC (the benchmarks-game program) | java, ocaml | 679974 |
+| `lean-qsort` | Lean's **array** axioms, in-place sort | java, ocaml | 0 |
+| `lean-rbmap-mono` | balanced tree, erased proof component | java, ocaml | 2000 |
+| `lean-unionfind` | state monad over an array | java, ocaml | 4000 |
+| `lean-const-fold-peano` | the same, axiom-free | **java, c, ocaml, eval** | 1 |
+| `lean-binarytrees-peano` | the same, axiom-free | **java, c, ocaml, eval** | 1 |
+
+Each case ships the upstream `.lean` verbatim, `lean-to-lambdabox`'s unmodified
+`prog.ast`, a two-line `prog.lean` extraction driver (which only closes the
+benchmark over its input, and records how to regenerate), and — for the peano
+variants — nothing else. Inputs are reduced from upstream's (e.g. `binarytrees`
+12 instead of 17) so a full `run-all.sh` stays minutes rather than hours; the
+`prog.lean` header says how to change them.
+
+### Three kinds of comparison, and what each is worth
+
+* **Against Lean itself.** `EXPECTED` is the value Lean's *native* compiler
+  produces for the same benchmark at the same input — an oracle from outside this
+  project. (`#eval` is not usable for several of them: the interpreter's own depth
+  limit trips, independently of `ulimit -s`.)
+* **java vs ocaml, on the same λ□ file.** For the axiom cases this is stronger
+  than it looks: Lean's `@[extern]` primitives are erased to λ□ **axioms**, and the
+  two backends realize them *independently* — ours in `javaAxioms` → `runtime/Rt.java`,
+  Lean's own OCaml realizations in `test/lean-ocaml-runtime/` (copied verbatim,
+  Zarith-based). Agreement is evidence about the realizations, not only about the
+  generator.
+* **All four backends on one file.** Only possible for a program with no axioms,
+  hence the two `*-peano` cases: erased with `nat := .peano, extern :=
+  .preferLogical`, they need no attributes and no realizations, so `peregrine c`
+  and `peregrine eval` accept them too. This is the first time the **C backend has
+  ever run a Lean-originated program here**. See `lean-peano-drivers/README.md`,
+  including why `rbmap_mono` cannot be made axiom-free (`.False.rec` survives).
+
+`check-case.sh <case>` / `check-all.sh` do the comparing. They run nothing: they
+read the `output.txt` files the run scripts already wrote, so `run-all.sh` ends
+with a machine-checked verdict while still printing every output for eyeballing.
+`eval` is excluded from the text diff (it prints `constr Bool.true` where the
+compiled backends print `1`), and the outputs must come from one run of the case
+— comparing a `java` output taken at `MATMUL_SIZE=130` against a `c` output taken
+at 260 is a mismatch in the files, not in the backends.
+
+### It immediately found a bug in committed code
+
+`lean-qsort` is the first case that uses Lean's `Array` axioms, and it **crashed**
+in generated Java (`ClassCastException` in `Rt.lng`, reached from `Nat.sub`) while
+the OCaml backend printed the correct `0`. `lean-unionfind` failed the same way.
+
+Cause: `Rt.curry`'s argument collector always advertised `Fn3` (from the chunked-
+axiom optimization), but `Rt.app2` treats an `Fn3` as a genuine *partial*
+application and returns a one-argument closure. So an arity-**2** axiom
+(`Array.size`, `Array.mk`, `Array.emptyWithCapacity`) called from a saturated
+2-argument call site quietly evaluated to a closure instead of its value — no
+error at that point, since a closure is a perfectly good `Object` — and blew up
+later inside whatever consumed the number. The collector now implements the
+interface matching the arguments *still missing* (`Fn3`/`Fn2`/`Fn`). This is
+exactly the class of bug the previous corpus could not reach: it needed a foreign
+program using a 2-ary axiom at a flattened call site.
+
+A second, smaller blocker: `tools/ast-to-arend` hit CPython's `RecursionError` on
+the deeper peano program, and raising the limit alone then overflowed the thread
+stack, so the importer now runs its work on a thread with a large stack.
+
+### Timings, and a conclusion that has to be revised
+
+Best of 3, milliseconds, same machine, `-XX:-DontCompileHugeMethods`:
+
+| case | java | ocaml | c | java/ocaml |
+|---|---:|---:|---:|---:|
+| `lean-const-fold` | 11595 | 696 | — | **17x** |
+| `lean-deriv` | 7873 | 6168 | — | 1.3x |
+| `lean-qsort` | 638 | 66 | — | 9.7x |
+| `lean-unionfind` | 426 | 48 | — | 8.9x |
+| `lean-binarytrees` | 374 | 120 | — | 3.1x |
+| `lean-rbmap-mono` | 316 | 23 | — | 13x |
+| `lean-const-fold-peano` | 96 | 10 | 8 | 9.6x |
+| `lean-binarytrees-peano` | 195 | 18 | 14 | 11x |
+
+**`lean-deriv`'s 1.3x was not representative.** It was the only foreign program we
+had, and it happens to be dominated by work all backends must do; on the other
+five we are 3–17x slower than Peregrine's OCaml backend. The C backend, where it
+can run at all, is at or slightly ahead of OCaml. Two suspects are named by the
+cases themselves rather than by guessing:
+
+* **`Nat` as boxed `Long` through curried axioms** — `const_fold` is almost pure
+  `Nat` arithmetic and is the worst case at 17x, while OCaml's realizations are
+  Zarith calls the native compiler inlines. This is the same axis as the
+  documented `int63` mismatch, i.e. one change (`targetInt63`, unboxed) would
+  address correctness *and* this.
+* **Persistent arrays** — `Rt`'s `Array.push`/`set!`/`swap` **copy** (λ□ has no
+  linearity information left, see `Rt.java`), so `qsort`/`unionfind` are O(n) where
+  Lean is O(1). Upstream's OCaml realizations use Filliâtre's persistent arrays
+  with the standard rerooting trick, which is O(1) amortized on the linear use
+  these programs actually make. That is a realization-level fix, not a compiler
+  one.
+
+Neither was visible before, and both are more valuable than the last 30% we were
+chasing on `deriv`.
 
 ## Checking an exported program against Peregrine
 

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# `const_fold` from Lean 4's own code-generator benchmarks, as shipped by
+# lean-to-lambdabox (benchmarks/FromLeanCommon/const_fold.lean, revision
+# 58701f8): builds a symbolic expression tree, evaluates it, then evaluates it
+# again after reassociation and constant folding, and adds the two results.
+#
+# NOT one of our programs: `const_fold.lean` is a verbatim copy, `prog.ast` and
+# `bench.mli` are lean-to-lambdabox's unmodified output, and `prog.lean` only
+# closes the benchmark over the input its manifest uses (20).
+#
+# Why this case earns its place next to `lean-deriv`: it is the program that once
+# returned 2048 instead of 4772 (at input 10) because `Nat.sub` was realized as wrapping
+# instead of truncating subtraction -- a wrong answer that no amount of eyeballing
+# would have caught. It is the cheapest program in the corpus that depends on
+# Lean's *arithmetic* axioms being right (add, sub, mul, beq, decEq).
+#
+# Backends: `java` (our own realizations, `javaAxioms` in ToJava.ard) and `ocaml`
+# (Lean's own realizations, test/lean-ocaml-runtime) -- the same λ□ file compiled
+# against two independently written implementations of the same axioms, which is
+# the whole point. No `c` backend is possible: `peregrine c` rejects a program
+# with axioms outright, and no C realizations of Lean's primitives exist (see
+# lean-deriv/case.sh). `eval` cannot run it for the same reason.
+ARENDMOD=LeanConstFold
+. "$LEAN_OCAML_RT/lean-case.sh"
+
+# Lean's own answer for input 20, obtained by compiling the benchmark with Lean's
+# NATIVE compiler (`#eval` cannot produce it: the expression tree exhausts Lean's
+# interpreter stack even with `ulimit -s unlimited`). Beware: 4772 -- the value
+# the Nat.sub bug produced 2048 for -- is input *10*, not 20.
+EXPECTED=6895932
+NOTE="expected: $EXPECTED (= eval e + eval (constFold (reassoc e)) for e = mkExpr 20 1); confirmed by Lean natively"
