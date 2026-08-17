@@ -262,11 +262,26 @@ the backends" below. `lean-deriv` is an *upstream* program (see "An upstream
 benchmark: lean-deriv"), and by far the slowest case — ~190 s to generate and
 ~70 s to run — so `run-all.sh` now takes several minutes longer.
 
-`BACKENDS` lists the backends the case supports; `example` and `peano` only
-declare `java`, since they return constructor data rather than a primitive int
-and have no C/OCaml driver yet. `matmul-ast`, `peano-ast`, `lean-map`, and
-`lean-matmul` hold a `prog.ast` instead of pointing at a hand-written Arend
-program (see "Importing external λ□ programs").
+`BACKENDS` lists the backends the case supports, and a case declares only what a
+backend can actually consume:
+
+* **No C** unless the program is axiom-free — `peregrine c` refuses outright
+  ("Axioms found, use Extract Constant to realize them in C"), and no upstream C
+  realizations of Lean's primitives exist. That leaves the `*-peano` cases and
+  `matmul`/`matmul-bench` (whose four prim-int axioms *are* realized, on the
+  CertiRocq runtime).
+* **No C or OCaml for a program returning constructor data** (`peano`,
+  `peano-ast`, `example`, `lean-map`): both drivers print one primitive int.
+  Those four instead declare `eval`, Peregrine's evaluator, where it is free (a
+  checked-in `.ast`, no attributes) — not text-comparable, so `check-case.sh`
+  skips it, but it is an independent reference semantics for the same file.
+* `matmul-ast` stays java-only on purpose: `matmul-bench` already runs C and
+  OCaml on the byte-identical program, so a third copy of the drivers would add
+  no evidence.
+
+`matmul-ast`, `peano-ast`, `lean-map`, and `lean-matmul` hold a `prog.ast`
+instead of pointing at a hand-written Arend program (see "Importing external λ□
+programs").
 
 Seven cases are *upstream* Lean 4 code-generator benchmarks, none of them written
 by us — see "The upstream benchmark corpus" below. They are also where the
@@ -541,11 +556,13 @@ compare throughput on.
 
 What this says:
 
-* **Our generated Java is in the same league as the verified backends**:
-  `java-long` is 2.1–2.9x the C backend and 1.4–1.5x the OCaml one, and the
-  ratios are stable across sizes — so nothing in the generated shape degrades as
-  the workload grows. All four scale alike (~x16 from 130 to 260, i.e. quartic,
-  which is the algorithm: `lookupCol`/`nth` walk lists).
+* **On this workload our generated Java is in the same league as the verified
+  backends**: `java-long` is 2.1–2.9x the C backend and 1.4–1.5x the OCaml one,
+  and the ratios are stable across sizes — so nothing in the generated shape
+  degrades as the workload grows. All four scale alike (~x16 from 130 to 260,
+  i.e. quartic, which is the algorithm: `lookupCol`/`nth` walk lists). Do not
+  generalize the ratio: across the whole corpus java/ocaml ranges from 1.06x to
+  50x (see "Timings: the whole corpus"), and this workload is at the good end.
 * **BigInteger costs ~6x** over `long` on this integer-heavy program. That is the
   price of the current default; see the int63 discussion above.
 * **Code generation, not generated code, is our cost**: ~30 s of Arend against
@@ -1049,6 +1066,10 @@ shipped by `lean-to-lambdabox` (`benchmarks/FromLeanCommon/`, revision `58701f8`
 | `lean-const-fold-peano` | the same, axiom-free | **java, c, ocaml, eval** | 1 |
 | `lean-binarytrees-peano` | the same, axiom-free | **java, c, ocaml, eval** | 1 |
 
+(`lean-matmul` is *ours*, written in Lean rather than taken from upstream, but it
+uses the same shared realizations and so also runs on `ocaml`: its axioms are
+exactly `.Nat.add/.sub/.beq/.mul`, which `lean-ocaml-runtime/nat.ml` realizes.)
+
 Each case ships the upstream `.lean` verbatim, `lean-to-lambdabox`'s unmodified
 `prog.ast`, a two-line `prog.lean` extraction driver (which only closes the
 benchmark over its input, and records how to regenerate), and — for the peano
@@ -1109,41 +1130,108 @@ A second, smaller blocker: `tools/ast-to-arend` hit CPython's `RecursionError` o
 the deeper peano program, and raising the limit alone then overflowed the thread
 stack, so the importer now runs its work on a thread with a large stack.
 
-### Timings, and a conclusion that has to be revised
+### Timings: the whole corpus, all backends, simplified generator
 
-Best of 3, milliseconds, same machine, `-XX:-DontCompileHugeMethods`:
+The numbers below replace two earlier tables. They were taken after the
+three-part performance change was reverted, with **every case regenerated and
+rebuilt in one `run-all.sh`**, so the compared artifacts come from one state of
+the tree. `check-all.sh` was green for all 17 cases.
+
+Two corrections to what this file used to claim, both of which had made us look
+worse than we are:
+
+* **The old `ocaml` figure for `lean-const-fold` (696 ms) was a crashed run.**
+  Several OCaml binaries need a raised stack limit (the harness sets
+  `NATIVE_RUN_STACK=unlimited`); without it `lean-const-fold` dies with
+  `Fatal error: exception Stack_overflow` after ~0.5 s. Measured with the limit
+  raised — and verified to print `6895932` — it takes ~2.0 s, so the headline
+  "17x" is really **6.6x**. Lesson worth keeping: time only runs whose output was
+  checked; `run-timed.sh` does that, ad-hoc loops don't.
+* Run times here are best of 3 on a machine with other load; the two big cases
+  (`lean-const-fold`, `lean-deriv`) have ±30% spread in *every* configuration
+  because of the C2 `unloaded`-uncommon-trap pathology described above.
+
+#### Run time (ms, best of 3, `-Xss512m -XX:-DontCompileHugeMethods`, all outputs verified)
 
 | case | java | ocaml | c | java/ocaml |
 |---|---:|---:|---:|---:|
-| `lean-const-fold` | 11595 | 696 | — | **17x** |
-| `lean-deriv` | 7873 | 6168 | — | 1.3x |
-| `lean-qsort` | 638 | 66 | — | 9.7x |
-| `lean-unionfind` | 426 | 48 | — | 8.9x |
-| `lean-binarytrees` | 374 | 120 | — | 3.1x |
-| `lean-rbmap-mono` | 316 | 23 | — | 13x |
-| `lean-const-fold-peano` | 96 | 10 | 8 | 9.6x |
-| `lean-binarytrees-peano` | 195 | 18 | 14 | 11x |
+| `lean-deriv` | 13835 | 6419 | — | 2.2x |
+| `lean-const-fold` | 13097 | 1994 | — | 6.6x |
+| `lean-matmul` | 2769 | 2617 | — | **1.06x** |
+| `matmul` | 1584 | 1126 | 459 | 1.4x |
+| `matmul-bench` | 1506 | 836 | 463 | 1.8x |
+| `lean-binarytrees` | 1290 | 100 | — | 13x |
+| `lean-qsort` | 944 | 71 | — | 13x |
+| `lean-unionfind` | 691 | 53 | — | 13x |
+| `lean-rbmap-mono` | 506 | 26 | — | 19x |
+| `lean-binarytrees-peano` | 465 | 9 | 7 | 50x |
+| `lean-matmul-peano` | 181 | 11 | 10 | 16x |
+| `lean-const-fold-peano` | 88 | 16 | 9 | 5.5x |
+| `peano`, `peano-ast`, `example`, `lean-map` | 26–31 | — | — | JVM startup |
 
-**`lean-deriv`'s 1.3x was not representative.** It was the only foreign program we
-had, and it happens to be dominated by work all backends must do; on the other
-five we are 3–17x slower than Peregrine's OCaml backend. The C backend, where it
-can run at all, is at or slightly ahead of OCaml. Two suspects are named by the
-cases themselves rather than by guessing:
+The spread is 1.06x to 50x, so **no single ratio characterizes the backend** —
+which is exactly why `lean-deriv`'s old 1.3x was misleading, and why the 17x
+was too. Reading it by workload:
+
+* `lean-matmul` at 1.06x and `matmul` at 1.4x are the arithmetic-bound cases, and
+  they are the ones the reverted optimizations *hurt*.
+* The 13–19x cases are the ones that allocate constructor nodes hard
+  (`binarytrees`, `rbmap_mono`) or use `Array` (`qsort`, `unionfind`) — but note
+  they are 26–1300 ms in absolute terms, i.e. a large ratio on a small number.
+* The `-peano` ratios are the largest and the least informative: at 9–16 ms for
+  the native backends, ~28 ms of JVM startup alone loses the race.
+
+The two structural suspects the corpus names (unchanged by the remeasurement):
 
 * **`Nat` as boxed `Long` through curried axioms** — `const_fold` is almost pure
-  `Nat` arithmetic and is the worst case at 17x, while OCaml's realizations are
-  Zarith calls the native compiler inlines. This is the same axis as the
-  documented `int63` mismatch, i.e. one change (`targetInt63`, unboxed) would
-  address correctness *and* this.
+  `Nat` arithmetic and is the worst of the big cases, while OCaml's realizations
+  are Zarith calls the native compiler inlines. Same axis as the documented
+  `int63` mismatch, so `targetInt63` would address correctness *and* this. Note,
+  though, that profiling `const_fold` blamed a JIT deoptimization pathology and
+  allocation, **not** boxing (`java.lang.Long` was 0.3% of allocation samples).
 * **Persistent arrays** — `Rt`'s `Array.push`/`set!`/`swap` **copy** (λ□ has no
-  linearity information left, see `Rt.java`), so `qsort`/`unionfind` are O(n) where
-  Lean is O(1). Upstream's OCaml realizations use Filliâtre's persistent arrays
-  with the standard rerooting trick, which is O(1) amortized on the linear use
-  these programs actually make. That is a realization-level fix, not a compiler
-  one.
+  linearity information left, see `Rt.java`), so `qsort`/`unionfind` are O(n)
+  where Lean is O(1). Upstream's OCaml realizations use Filliâtre's persistent
+  arrays with the standard rerooting trick, which is O(1) amortized on the linear
+  use these programs actually make. A realization-level fix, not a compiler one.
 
-Neither was visible before, and both are more valuable than the last 30% we were
-chasing on `deriv`.
+#### Compile time (ms, from `work/timings.tsv` of the same run)
+
+This is the comparison that decides whether run-time optimization is worth
+anything to us right now. "java-gen" is `import-ast` plus the Arend typechecking
+run that prints the program; the C/OCaml backends start from the *same* `.ast`,
+so `peregrine` is the honest counterpart:
+
+| case | java-gen | javac | c: peregrine | gcc | ocaml: peregrine | ocamlopt |
+|---|---:|---:|---:|---:|---:|---:|
+| `lean-deriv` | **176787** | 3145 | — | — | 142 | 660 |
+| `lean-binarytrees-peano` | 77932 | 2010 | 490 | 2313 | 89 | 377 |
+| `lean-binarytrees` | 60315 | 4348 | — | — | 118 | 1525 |
+| `lean-unionfind` | 54389 | 1889 | — | — | 87 | 698 |
+| `lean-const-fold` | 43961 | 2206 | — | — | 55 | 597 |
+| `lean-qsort` | 42333 | 1651 | — | — | 49 | 627 |
+| `lean-const-fold-peano` | 41875 | 1689 | 167 | 1107 | 49 | 205 |
+| `lean-rbmap-mono` | 36270 | 3504 | — | — | 67 | 812 |
+| `lean-matmul` | 24970 | 1205 | — | — | 12 | 517 |
+| `matmul` | 22516 | 1045 | 47 | 915 | 28 | 327 |
+| small cases | 21291–29133 | ~1100 | 23–86 | 625–858 | 13–18 | 174–255 |
+
+So **our compiler is 300–1400x slower than Peregrine's backends** (12–490 ms
+there, 21–177 s here), and ~21 s of that is a fixed floor: resolving and
+cache-loading arend-lib's ~156-module cone on every JVM start (see "Binary
+caches" above). Compilation is therefore 3–13x the *run* time of even the
+slowest case, and 1000x it for the small ones.
+
+#### Verdict: run-time optimizations are not what this project needs
+
+Every case runs in ≤14 s and 13 of 17 in under 1.6 s, so the corpus is
+comfortably usable for experimentation — which is the stated goal of the first
+cut. Meanwhile the thing one actually waits for is generation, where we are three
+orders of magnitude behind, and where the reverted optimizations made it *2–22x
+worse still*. Any performance work that ignores the generator optimizes the
+wrong end of the pipeline; and the honest fixes on the run-time side
+(`targetInt63`, non-copying arrays) are realization- and semantics-level changes
+that belong to a dedicated phase, not micro-tuning of the emitted shape.
 
 ## Checking an exported program against Peregrine
 

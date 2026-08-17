@@ -8,7 +8,12 @@
 # it must print exactly what the `peano` case prints, which makes it a test of
 # the importer against Serialize.ard rather than of the compiler.
 
-BACKENDS="java"
+# `eval` costs nothing here (the .ast is checked in, the program is axiom-free)
+# and makes Peregrine's evaluator a reference semantics for the same file. Its
+# output is not text-comparable (`constr suc ...` against our `1(...)`), so
+# check-case.sh skips it; the structure is compared by eye. No C/OCaml: the
+# result is constructor data and both drivers print a primitive int only.
+BACKENDS="java eval"
 AST_PRODUCER="cat $CASE_DIR/prog.ast"
 # The import step prints nothing on stdout, so it chains in front of the
 # extraction; $JAVA_DEF_SUFFIX comes from config.sh's JAVA_INT
