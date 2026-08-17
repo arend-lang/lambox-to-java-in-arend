@@ -8,7 +8,7 @@
 // Design (matches the untyped λ□ encoding):
 //   * untyped values     -> Object
 //   * closures           -> Fn (anonymous inner classes, no invokedynamic)
-//   * constructors       -> Data(tag, f0, f1, f2 [, rest])
+//   * constructors       -> Data(tag, fields)
 //   * erased proofs/types -> BOX
 //
 // Kept to plain loops/casts (no lambdas/streams/pattern-switch) per the
@@ -20,118 +20,15 @@ public final class Rt {
     Object apply(Object x);
   }
 
-  // Arity-specialized entry points (ToJava.ard compiles a 2-/3-deep lambda
-  // nest to ONE anonymous class implementing the matching interface). The
-  // multi-argument `apply` is the real entry point: arguments are passed in
-  // registers, and no intermediate closure is allocated for a saturated call.
-  // The unary `apply` default keeps every Fn2/Fn3 a perfectly ordinary curried
-  // Fn, so partial application and unsuspecting callers still work: it
-  // allocates exactly the partial-application closure the curried code would
-  // have allocated anyway.
-  public interface Fn2 extends Fn {
-    Object apply(Object x, Object y);
-
-    default Object apply(final Object x) {
-      final Fn2 self = this;
-      return new Fn() { public Object apply(Object y) { return self.apply(x, y); } };
-    }
-  }
-
-  public interface Fn3 extends Fn {
-    Object apply(Object x, Object y, Object z);
-
-    default Object apply(final Object x) {
-      final Fn3 self = this;
-      return new Fn2() { public Object apply(Object y, Object z) { return self.apply(x, y, z); } };
-    }
-  }
-
-  // Call-site dispatch for a flattened application spine of 2 or 3 arguments
-  // (ToJava.ard's `applySpine`): if the callee advertises the matching arity,
-  // one direct interface call; otherwise fall back to the per-argument curried
-  // protocol, which is always correct (partial application, over-application,
-  // unknown callees). Longer spines are emitted as app3 followed by more
-  // applications of its result.
-  public static Object app2(Object f, final Object a, Object b) {
-    if (f instanceof Fn2) return ((Fn2) f).apply(a, b);
-    // An Fn3 given two arguments is a genuine partial application: build the
-    // one-argument closure directly instead of going through Fn3's default
-    // unary apply (which allocates an Fn2 wrapper) and then Fn2's default
-    // unary apply (which allocates a second wrapper) -- one object, not two.
-    if (f instanceof Fn3) {
-      final Fn3 g = (Fn3) f;
-      final Object b2 = b;
-      return new Fn() { public Object apply(Object c) { return g.apply(a, b2, c); } };
-    }
-    return ((Fn) ((Fn) f).apply(a)).apply(b);
-  }
-
-  public static Object app3(Object f, Object a, Object b, Object c) {
-    if (f instanceof Fn3) return ((Fn3) f).apply(a, b, c);
-    if (f instanceof Fn2) return ((Fn) ((Fn2) f).apply(a, b)).apply(c);
-    return ((Fn) ((Fn) ((Fn) f).apply(a)).apply(b)).apply(c);
-  }
-
-  // A constructor value: a tag plus its fields. The first THREE fields are
-  // inline (`f0`/`f1`/`f2`), further ones spill into `rest`.
-  //
-  // WHY NOT ONE `Object[] fields`: that shape allocated TWO objects per node
-  // (the Data, plus the array with its own header and length) -- ~56 bytes and
-  // two allocations where OCaml's block is one 24-byte allocation. Profiling
-  // `lean-deriv` (which builds a 40-million-node result) found 9.2 GB of
-  // `Object[]` and a 1.58 GB live set. Since λ□ constructor arities are almost
-  // all <= 3, inline fields remove the second object entirely, and every field
-  // access becomes a `getfield` at a constant offset instead of an array load
-  // (no null check, no bounds check, no dependent load).
+  // `toString` overrides here are purely for making printed program output
+  // human-readable (e.g. inspecting `System.out.println(__main())`): a
+  // recursive, indented `tag(\n  field,\n  field\n)` tree, where flat leaves
+  // like `0` print with no parens.
   public static final class Data {
     public final int tag;
-    // Number of fields, needed only by `toString`/`field`; the generator knows
-    // every index statically and reads `f0`/`f1`/`f2`/`rest[i-3]` directly.
-    public final int arity;
-    public final Object f0, f1, f2;
-    public final Object[] rest;
+    public final Object[] fields;
 
-    public Data(int tag) {
-      this.tag = tag; this.arity = 0;
-      this.f0 = null; this.f1 = null; this.f2 = null; this.rest = null;
-    }
-
-    public Data(int tag, Object a) {
-      this.tag = tag; this.arity = 1;
-      this.f0 = a; this.f1 = null; this.f2 = null; this.rest = null;
-    }
-
-    public Data(int tag, Object a, Object b) {
-      this.tag = tag; this.arity = 2;
-      this.f0 = a; this.f1 = b; this.f2 = null; this.rest = null;
-    }
-
-    public Data(int tag, Object a, Object b, Object c) {
-      this.tag = tag; this.arity = 3;
-      this.f0 = a; this.f1 = b; this.f2 = c; this.rest = null;
-    }
-
-    // Arity 4+, reached through the `Rt.data` factory below rather than as a
-    // `Data(int, Object[])` constructor, so that a ONE-field node whose field
-    // happens to be an `Object[]` (a Lean array) can never select it by
-    // overload resolution.
-    Data(int tag, Object[] fields) {
-      this.tag = tag; this.arity = fields.length;
-      this.f0 = fields[0]; this.f1 = fields[1]; this.f2 = fields[2];
-      this.rest = new Object[fields.length - 3];
-      System.arraycopy(fields, 3, this.rest, 0, this.rest.length);
-    }
-
-    // `toString`/`render` exist purely to make printed program output
-    // human-readable (e.g. `System.out.println(__main())`): a recursive,
-    // indented `tag(\n  field,\n  field\n)` tree, where flat leaves like `0`
-    // print with no parens.
-    public Object field(int i) {
-      if (i == 0) return f0;
-      if (i == 1) return f1;
-      if (i == 2) return f2;
-      return rest[i - 3];
-    }
+    public Data(int tag, Object[] fields) { this.tag = tag; this.fields = fields; }
 
     @Override public String toString() {
       StringBuilder sb = new StringBuilder();
@@ -146,13 +43,13 @@ public final class Rt {
     // program that produced it. The text produced is unchanged.
     public void render(StringBuilder sb, int indent) {
       sb.append(tag);
-      if (arity == 0) return;
+      if (fields.length == 0) return;
       sb.append("(\n");
-      for (int i = 0; i < arity; i++) {
+      for (int i = 0; i < fields.length; i++) {
         indentBy(sb, indent + 1);
-        Object f = field(i);
+        Object f = fields[i];
         if (f instanceof Data) { ((Data) f).render(sb, indent + 1); } else { sb.append(String.valueOf(f)); }
-        if (i < arity - 1) sb.append(",");
+        if (i < fields.length - 1) sb.append(",");
         sb.append("\n");
       }
       indentBy(sb, indent);
@@ -163,10 +60,6 @@ public final class Rt {
       for (int j = 0; j < indent; j++) sb.append("  ");
     }
   }
-
-  // The arity-4+ constructor value; the generator emits this only when a λ□
-  // `construct` node has more than three arguments (rare).
-  public static Data data(int tag, Object[] fields) { return new Data(tag, fields); }
 
   // A compiled closure can't show anything structural, so it gets a fixed
   // placeholder instead of a raw hashcode.
@@ -282,42 +175,55 @@ public final class Rt {
 
   // eqb's result ABI: the two-constructor Bool inductive with no fields,
   // false = tag 0, true = tag 1 (matching the declared constructor order).
-  public static final Data FALSE = new Data(0);
-  public static final Data TRUE = new Data(1);
+  public static final Data FALSE = new Data(0, new Object[]{});
+  public static final Data TRUE = new Data(1, new Object[]{});
 
-  // All arity-2 primitives are `Bin` (declared below, implements Fn2), so a
-  // flattened call site `Rt.app2(PRIM_ADD_LONG, a, b)` is one direct call with
-  // no intermediate closure; curried callers still work via Fn2's default.
-  public static final Fn PRIM_ADD_INT = new Bin() {
-    Object run(Object x, Object y) { return num(x).add(num(y)); }
+  public static final Fn PRIM_ADD_INT = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return num(x).add(num(y)); } };
+    }
   };
 
-  public static final Fn PRIM_MUL_INT = new Bin() {
-    Object run(Object x, Object y) { return num(x).multiply(num(y)); }
+  public static final Fn PRIM_MUL_INT = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return num(x).multiply(num(y)); } };
+    }
   };
 
-  public static final Fn PRIM_SUB_INT = new Bin() {
-    Object run(Object x, Object y) { return num(x).subtract(num(y)); }
+  public static final Fn PRIM_SUB_INT = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return num(x).subtract(num(y)); } };
+    }
   };
 
-  public static final Fn PRIM_EQB_INT = new Bin() {
-    Object run(Object x, Object y) { return num(x).equals(num(y)) ? TRUE : FALSE; }
+  public static final Fn PRIM_EQB_INT = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return num(x).equals(num(y)) ? TRUE : FALSE; } };
+    }
   };
 
-  public static final Fn PRIM_ADD_LONG = new Bin() {
-    Object run(Object x, Object y) { return Long.valueOf(lng(x) + lng(y)); }
+  public static final Fn PRIM_ADD_LONG = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return Long.valueOf(lng(x) + lng(y)); } };
+    }
   };
 
-  public static final Fn PRIM_MUL_LONG = new Bin() {
-    Object run(Object x, Object y) { return Long.valueOf(lng(x) * lng(y)); }
+  public static final Fn PRIM_MUL_LONG = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return Long.valueOf(lng(x) * lng(y)); } };
+    }
   };
 
-  public static final Fn PRIM_SUB_LONG = new Bin() {
-    Object run(Object x, Object y) { return Long.valueOf(lng(x) - lng(y)); }
+  public static final Fn PRIM_SUB_LONG = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return Long.valueOf(lng(x) - lng(y)); } };
+    }
   };
 
-  public static final Fn PRIM_EQB_LONG = new Bin() {
-    Object run(Object x, Object y) { return lng(x) == lng(y) ? TRUE : FALSE; }
+  public static final Fn PRIM_EQB_LONG = new Fn() {
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return lng(x) == lng(y) ? TRUE : FALSE; } };
+    }
   };
 
   // --- Lean machine-Nat operations -------------------------------------------
@@ -327,13 +233,14 @@ public final class Rt {
   // `Nat.add`/`mul`/`sub`/`beq` above. Same curried ABI, same two
   // representations, same 63-bit caveat.
   //
-  // A binary operation is written once by extending `Bin`. It implements Fn2,
-  // so a flattened 2-argument call site (`Rt.app2`) reaches `run` directly;
-  // the curried unary `apply` comes from Fn2's default.
-  private abstract static class Bin implements Fn2 {
+  // A binary operation is written once by extending `Bin`: the outer `apply`
+  // returns the closure that takes the second argument.
+  private abstract static class Bin implements Fn {
     abstract Object run(Object x, Object y);
 
-    public Object apply(Object x, Object y) { return run(x, y); }
+    public Object apply(final Object x) {
+      return new Fn() { public Object apply(Object y) { return Bin.this.run(x, y); } };
+    }
   }
 
   // Lean's `Nat.sub` is TRUNCATED subtraction: `a - b = 0` when `b >= a`. It
@@ -364,8 +271,8 @@ public final class Rt {
   // produced by lean-to-lambdabox carry `npars = 0` on some `tCase` nodes and
   // `npars = 1` on others, and a branch reads `fields[npars]`. The field is a
   // proof, hence never inspected -- only its presence matters.
-  public static final Data IS_FALSE = new Data(0, BOX, BOX);
-  public static final Data IS_TRUE = new Data(1, BOX, BOX);
+  public static final Data IS_FALSE = new Data(0, new Object[]{ BOX, BOX });
+  public static final Data IS_TRUE = new Data(1, new Object[]{ BOX, BOX });
 
   private static Data dec(boolean b) { return b ? IS_TRUE : IS_FALSE; }
 
@@ -559,72 +466,23 @@ public final class Rt {
     Object run(Object[] args);
   }
 
-  // `curry(n, op)` collects n arguments and then runs `op`. Each partial
-  // application gets its own array, so a partially applied operation stays a
-  // value that can be shared.
-  //
-  // The collector implements Fn2/Fn3, so a flattened call site (`Rt.app2`/
-  // `Rt.app3`) hands it two or three arguments at a time: one array and one
-  // closure per chunk instead of per argument. That matters because these axioms
-  // have high arity (`EQ_REC` is 6, `ARRAY_SWAP` 6): profiling `lean-deriv`
-  // attributed 4.8 GB of garbage -- 15% of all allocation -- to the old
-  // one-argument-at-a-time collector, all of it reached from `Rt.app3`.
-  //
-  // THE INTERFACE MUST MATCH THE ARGUMENTS STILL MISSING, not just be the widest
-  // one available. `Rt.app2` treats an `Fn3` as a genuine partial application and
-  // returns a one-argument closure, so a collector that advertised `Fn3` while
-  // needing only two more arguments turned a saturated 2-argument call site into
-  // a closure -- silently, since the closure is a perfectly good `Object`. It
-  // then blew up far away, in whatever consumed the result: `lean-qsort` (the
-  // first case using `Array.size`, arity 2) died with a ClassCastException inside
-  // `Nat.sub`. Hence the three-way split below; `step` still handles arriving
-  // chunks that over- or under-shoot.
+  // `curry(n, op)` collects n arguments one `apply` at a time and then runs
+  // `op`. Each partial application gets its own array, so a partially applied
+  // operation stays a value that can be shared.
   private static Fn curry(final int arity, final Op op) {
     return curry(arity, op, new Object[0]);
   }
 
   private static Fn curry(final int arity, final Op op, final Object[] got) {
-    final int missing = arity - got.length;
-    if (missing >= 3) {
-      return new Fn3() {
-        public Object apply(Object x) { return step(arity, op, got, new Object[] { x }); }
-        public Object apply(Object x, Object y) { return step(arity, op, got, new Object[] { x, y }); }
-        public Object apply(Object x, Object y, Object z) {
-          return step(arity, op, got, new Object[] { x, y, z });
-        }
-      };
-    }
-    if (missing == 2) {
-      return new Fn2() {
-        public Object apply(Object x) { return step(arity, op, got, new Object[] { x }); }
-        public Object apply(Object x, Object y) { return step(arity, op, got, new Object[] { x, y }); }
-      };
-    }
     return new Fn() {
-      public Object apply(Object x) { return step(arity, op, got, new Object[] { x }); }
+      public Object apply(Object x) {
+        Object[] next = new Object[got.length + 1];
+        System.arraycopy(got, 0, next, 0, got.length);
+        next[got.length] = x;
+        if (next.length == arity) return op.run(next);
+        return curry(arity, op, next);
+      }
     };
-  }
-
-  // Add `more` to the arguments collected so far. Under-saturated: keep
-  // collecting. Saturated: run. OVER-saturated -- possible now that arguments
-  // arrive in chunks of up to three (e.g. the 4-argument `ARRAY_PUSH` reached
-  // by app3 after one argument) -- run on the first `arity` and apply the
-  // surplus to the result, exactly as the curried protocol would.
-  private static Object step(int arity, Op op, Object[] got, Object[] more) {
-    int n = got.length + more.length;
-    if (n < arity) {
-      Object[] all = new Object[n];
-      System.arraycopy(got, 0, all, 0, got.length);
-      System.arraycopy(more, 0, all, got.length, more.length);
-      return curry(arity, op, all);
-    }
-    int take = arity - got.length;
-    Object[] all = new Object[arity];
-    System.arraycopy(got, 0, all, 0, got.length);
-    System.arraycopy(more, 0, all, got.length, take);
-    Object r = op.run(all);
-    for (int i = take; i < more.length; i++) r = ((Fn) r).apply(more[i]);
-    return r;
   }
 
   private static Object[] arr(Object x) { return (Object[]) x; }
@@ -659,8 +517,8 @@ public final class Rt {
       while (true) {
         Data d = (Data) cur;
         if (d.tag == 0) break;
-        out.add(d.field(d.arity - 2));
-        cur = d.field(d.arity - 1);
+        out.add(d.fields[d.fields.length - 2]);
+        cur = d.fields[d.fields.length - 1];
       }
       return out.toArray();
     }
@@ -754,15 +612,7 @@ public final class Rt {
   // the realization returns that fourth argument unchanged. Over-application
   // (the result is itself a function) works because the returned value is then
   // applied by the enclosing `app` node, as usual.
-  // Realized as Fn3-returning-Fn3, not via `curry`: the generator chunks a
-  // spine by three, so `Rt.app3(Rt.app3(EQ_REC, BOX, a, BOX), m, BOX, h)` now
-  // costs two interface calls and one closure, with no argument arrays at all.
-  // (`lean-deriv` allocated 4.8 GB in this axiom alone under the collector.)
-  public static final Fn EQ_REC = new Fn3() {
-    public Object apply(Object x, Object y, Object z) {
-      return new Fn3() {
-        public Object apply(Object m, Object b, Object h) { return m; }
-      };
-    }
-  };
+  public static final Fn EQ_REC = curry(6, new Op() {
+    public Object run(Object[] a) { return a[3]; }
+  });
 }

@@ -722,7 +722,11 @@ interface call with register-passed arguments, not a generic loop. That
 (callee side + this same spine collector) is the actual next step; the array
 fallback should exist only for arity > N and partial application.
 
-### Arity-aware callees (`Rt.Fn2`/`Fn3` + `Rt.app2`/`app3`) — implemented, ~1.5x on deriv
+### Arity-aware callees (`Rt.Fn2`/`Fn3` + `Rt.app2`/`app3`) — REVERTED, see below
+
+(Historical. This was implemented, measured as described here, and then reverted
+together with the next section — see "The three-part performance change was
+reverted". The code is on branch `inline-data-and-arity-calls`.)
 
 The callee-side change above is now in: `ToJava.ard` compiles a 2-/3-deep
 lambda nest to ONE anonymous class implementing `Rt.Fn2`/`Rt.Fn3`, whose real
@@ -753,7 +757,11 @@ arithmetic-heavy sites hit `Bin.apply(x, y)` directly instead of allocating an
 intermediate closure, and the fallback path inside `app2`/`app3` is the same
 chain the JIT was already inlining.
 
-### Inline constructor fields and chunked axioms — implemented, **deriv 40 s → 8.6 s**
+### Inline constructor fields and chunked axioms — REVERTED, see below
+
+(Historical, as above. Note in particular that the "none" baselines in this
+section predate `JAVA_RUN_FLAGS`, which alone accounts for most of the famous
+5–7x; the honest corpus-wide numbers are in the next section.)
 
 After the arity work, JFR (`settings=profile`) said the protocol was no longer
 the bottleneck (~13% of samples, was 84%): the cost was **allocation** — 31.6 GB
@@ -816,6 +824,90 @@ patching generated code and are wrong.
 With this, `lean-deriv` is **8.6–9.1 s against Peregrine's OCaml backend at
 7.0 s on the same machine — 1.25–1.3x**, where this case started at 10x.
 
+### The three-part performance change was reverted (2026-08-17)
+
+The two sections above — inline `Rt.Data` fields, `Fn2`/`Fn3` + spine
+flattening, chunked axioms, committed as one unit in `05eabe4` — are **no longer
+on `main`**. They are preserved on branch `inline-data-and-arity-calls`
+(pushed), and `main` is back to one calling protocol (`Rt.Fn.apply(Object)`) and
+one value representation (`Data(tag, Object[] fields)`), i.e. ~260 fewer lines
+of generator and hand-written runtime Java.
+
+The decision was made after measuring the **whole** 17-case corpus in both
+configurations, with every case *regenerated* (not patched) and run with the
+harness's own flags. Two of the numbers we had been quoting turned out to be
+artifacts, and both flattered the optimizations:
+
+* seven builds under `test/work/` were stale leftovers from the parked
+  `known-arity-and-sinking` branch, so "full" timings taken from them measured a
+  *different* patch;
+* the famous "`lean-deriv`: 50–55 s without the optimizations" was measured
+  before `JAVA_RUN_FLAGS=-XX:-DontCompileHugeMethods` existed. With the flag the
+  unoptimized build runs in 13–17 s, so most of that 5–7x was the 8000-bytecode
+  JIT cliff, not the optimizations.
+
+Run time (ms, best of 3–5, all outputs correct in both configurations):
+
+| case | optimized | simple | optimized is |
+|---|---:|---:|---|
+| `lean-binarytrees` | **376** | 1311 | 3.5x faster |
+| `lean-binarytrees-peano` | **97** | 299 | 3.1x faster |
+| `lean-rbmap-mono` | **198** | 383 | 1.9x faster |
+| `lean-unionfind` | **415** | 604 | 1.5x faster |
+| `lean-qsort` | **570** | 793 | 1.4x faster |
+| `lean-matmul-peano` | **65** | 84 | 1.3x faster |
+| `lean-deriv` | 10084–14905 | 13386–17174 | ~1.15x, inside noise |
+| `lean-const-fold` | 10525–14170 | 10912–15357 | wash |
+| `lean-const-fold-peano` | 70 | 74 | wash |
+| `lean-matmul` | 3702 | **3280** | 1.1x *slower* |
+| `matmul-ast` | 1773 | **1303** | 1.4x *slower* |
+| `matmul` | 1906 | **1287** | 1.5x *slower* |
+| `peano`, `peano-ast`, `example`, `lean-map` | 28–29 | 25–29 | JVM startup |
+
+Generation time, same warm `.arc` caches, `extract-arend` stage only — the
+number that actually decided it, because the generator is the part of the
+development loop one waits for:
+
+| case | optimized | simple | optimized is |
+|---|---:|---:|---|
+| `lean-qsort` | **964 s** | **44 s** | 22x slower |
+| `lean-unionfind` | 582 s | 63 s | 9x slower |
+| `lean-binarytrees` | 94 s | 32 s | 2.9x slower |
+| `lean-deriv` | 362 s | 189 s | 1.9x slower |
+| `lean-const-fold` | 71 s | 38 s | 1.9x slower |
+| `lean-rbmap-mono` | 82 s | 43 s | 1.9x slower |
+| small cases | 23–31 s | 22–27 s | fixed Arend startup |
+
+So the change cost 2–22x in the generator to save 0–3.5x in the generated
+program, and *lost* 1.4–1.5x on the matmul family. Regenerating the corpus is
+~50 min without it and ~5 h with it.
+
+The pattern is consistent: the win is confined to programs whose cost is
+allocating many short-lived constructor nodes (inline `Data` removes one object
+per node); where the cost is boxed arithmetic in a tight loop the arity
+machinery is a net loss (`Rt.app2`/`app3` is one shared megamorphic site
+replacing per-site mono/bimorphic `.apply` chains that the JIT inlined
+through); and where the C2 `unloaded`-uncommon-trap pathology dominates
+(`lean-const-fold`) neither configuration matters.
+
+The other reason to revert is correctness. The arity machinery is a second,
+implicit protocol that has to agree between three places `javac` cannot check —
+the generator's chunking (`applySpine`), the runtime dispatchers
+(`app2`/`app3`/`Fn2`/`Fn3`), and every hand-written axiom (`curry`, `EQ_REC`,
+`Bin`). That disagreement already produced the corpus' only silent wrong answer
+in our own code (`ef2751a`). The simple protocol has one rule.
+
+What was **kept**, because none of it is a code-shape optimization: `long`
+instead of `BigInteger` (a faithfulness choice, one line), `Rt.Data.render` into
+one `StringBuilder` (the old version was quadratic in nesting depth),
+`Rt.runMain` (the program sizes its own stack), `JAVA_RUN_FLAGS`, and the corpus
+plus `check-case.sh`/`check-all.sh` — which is what made the simplification safe
+to do: `check-all.sh` was green before and after.
+
+When to re-apply: after ANF and closure conversion (plan steps 4–5), and only
+after fixing the generator's asymptotics — the 22x on `lean-qsort` says there is
+a quadratic path in the optimized `ToJava.ard` that should be understood first.
+
 ### Memoizing nullary constants is a REGRESSION — not implemented
 
 The remaining big allocation item in the profile was Lean's typeclass
@@ -840,8 +932,10 @@ above, but they cost ~6x in *generation* time (`lean-deriv`: ~380 s to ~2400 s o
 Arend typechecking) and ~250 lines of analysis in `ToJava.ard`: a name-keyed
 arity table threaded through `compileExpr`/`compileApp`, plus an occurrence
 counter. At 1.3x of Peregrine's OCaml backend, another 2x did not justify that,
-so the generator is back to the simple `Rt.app2`/`app3` dispatch and plain `let`
-locals. The patch itself is preserved on the pushed branch
+so the generator went back to the `Rt.app2`/`app3` dispatch and plain `let`
+locals — and that dispatch has since been removed too (see "The three-part
+performance change was reverted"), so this patch now applies to
+`inline-data-and-arity-calls`, not to `main`. The patch itself is preserved on the pushed branch
 `known-arity-and-sinking` (commit `9ae5f38`, branched off `05eabe4`), and the
 design is recorded here because it is correct and re-appliable once
 the generation cost is fixed (see the *Cost* paragraph); only the JVM flag
@@ -1005,6 +1099,11 @@ later inside whatever consumed the number. The collector now implements the
 interface matching the arguments *still missing* (`Fn3`/`Fn2`/`Fn`). This is
 exactly the class of bug the previous corpus could not reach: it needed a foreign
 program using a 2-ary axiom at a flattened call site.
+
+(The whole mechanism is gone from `main` since the revert — there is one interface
+and one collector again, so this bug cannot recur here. It is recorded because it
+is the concrete evidence that the arity protocol's cost was not only performance:
+it had to agree across three places `javac` does not check, and once it didn't.)
 
 A second, smaller blocker: `tools/ast-to-arend` hit CPython's `RecursionError` on
 the deeper peano program, and raising the limit alone then overflowed the thread

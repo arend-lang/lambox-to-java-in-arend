@@ -78,14 +78,6 @@
     "new " ++ printType iface ++ "(){ public Object apply(Object " ++ p ++ "){\n"
       ++ concatStr (mkArray {String} {body.len} (\lam i => printStmt (suc ind) (body i)))
       ++ indentStr ind ++ "} }"
-  | jAnonFn2 iface p q body =>
-    "new " ++ printType iface ++ "(){ public Object apply(Object " ++ p ++ ", Object " ++ q ++ "){\n"
-      ++ concatStr (mkArray {String} {body.len} (\lam i => printStmt (suc ind) (body i)))
-      ++ indentStr ind ++ "} }"
-  | jAnonFn3 iface p q s body =>
-    "new " ++ printType iface ++ "(){ public Object apply(Object " ++ p ++ ", Object " ++ q ++ ", Object " ++ s ++ "){\n"
-      ++ concatStr (mkArray {String} {body.len} (\lam i => printStmt (suc ind) (body i)))
-      ++ indentStr ind ++ "} }"
   | jStringLit s => "\"" ++ s ++ "\""
   | jIntLit n => natToStr n
   | jLongLit i => intToStr i ++ "L"

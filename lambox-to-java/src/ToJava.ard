@@ -1,7 +1,7 @@
 \import LambdaBox
 -- Only `map`/`mkArray`/`Big`: importing Data.Array wholesale would shadow
 -- String's `++` with the Array one, so array append is imported under the
--- alias `++A` (used in `appendStmts`, `concatMembers` and `compileClass`).
+-- alias `++A` (used in `appendStmts` and `compileClass` below).
 \import Data.Array (map, mkArray, Big, ++ \as \infixr 5 ++A)
 \import Data.Bool
 \import Data.Maybe
@@ -38,8 +38,7 @@
 -- threading (which would force a sequential helper).
 --
 -- Design (unchanged): untyped -> Java `Object`; closures = anonymous inner
--- classes (no invokedynamic); constructors -> `Data{int tag; Object f0, f1, f2;
--- Object[] rest}` (fields 0..2 inline, see `dataNew`/`dataField`);
+-- classes (no invokedynamic); constructors -> `Data{int tag; Object[] fields}`;
 -- constants -> zero-arg static methods; fix -> mutable `Fn[]` knot-tying.
 --
 -- The fixed part of that encoding (`Fn`, `Data` + its `toString`, `BOX`) is NOT
@@ -109,32 +108,7 @@
 
 \func rtFn {t : JavaTarget} : JType => tClass (rt ++ "Fn")
 
-\func rtFn2 {t : JavaTarget} : JType => tClass (rt ++ "Fn2")
-
-\func rtFn3 {t : JavaTarget} : JType => tClass (rt ++ "Fn3")
-
 \func rtData {t : JavaTarget} : JType => tClass (rt ++ "Data")
-
--- Build a constructor value. `Rt.Data` keeps its first THREE fields inline, so
--- arities 0..3 -- which is nearly every λ□ constructor -- allocate ONE object
--- and no argument array. Arity 4+ goes through the `Rt.data` factory with a
--- spill array (see Rt.java for why that is a factory and not an overload).
-\func dataNew {t : JavaTarget} (tag : Nat) (fs : Array JExpr) : JExpr \elim fs
-  | nil => jNew rtData (jIntLit tag :: nil)
-  | a :: nil => jNew rtData (jIntLit tag :: a :: nil)
-  | a :: b :: nil => jNew rtData (jIntLit tag :: a :: b :: nil)
-  | a :: b :: c :: nil => jNew rtData (jIntLit tag :: a :: b :: c :: nil)
-  | fs => jCallStatic (rt ++ "data") (jIntLit tag :: jNewArrayInit tObject fs :: nil)
-
--- Read field `i` of a constructor value: a `getfield` at a constant offset for
--- the inline fields, an index into the spill array beyond them. The index is
--- always known statically here, so `Rt.Data.field(int)` is never called by
--- generated code.
-\func dataField (d : JExpr) (i : Nat) : JExpr \elim i
-  | 0 => jField d "f0"
-  | 1 => jField d "f1"
-  | 2 => jField d "f2"
-  | suc (suc (suc k)) => jIndex (jField d "rest") (jIntLit k)
 
 \func targetLong : JavaTarget \cowith
   | runtimeClass => "Rt"
@@ -242,21 +216,6 @@
 -- The statements of a sequence of child results, in order.
 \func concatStmts (rs : Array Out) : Array JStmt => concatStmtBlocks (map (\lam r => r.1) rs)
 
--- Emit the call for a flattened application spine (see the `app` clause of
--- compileExpr). A 1-argument spine stays the plain curried call, so nothing
--- changes for the common case; 2- and 3-argument spines become ONE call to the
--- runtime dispatcher `Rt.app2`/`Rt.app3`, which hits the callee's Fn2/Fn3
--- entry point directly when arities match (one interface call, arguments in
--- registers, no intermediate closures) and falls back to the curried protocol
--- otherwise. Longer spines are chunked: app3 on the first three arguments,
--- then recurse on the rest (structural on `args`).
-\func applySpine {t : JavaTarget} (f : JExpr) (args : Array JExpr) : JExpr \elim args
-  | nil => f
-  | a :: nil => jInvoke (jCast rtFn f) "apply" (a :: nil)
-  | a :: b :: nil => jCallStatic (rt ++ "app2") (f :: a :: b :: nil)
-  | a :: b :: c :: nil => jCallStatic (rt ++ "app3") (f :: a :: b :: c :: nil)
-  | a :: b :: c :: args => applySpine (jCallStatic (rt ++ "app3") (f :: a :: b :: c :: nil)) args
-
 -- Kername -> Java method name. Every source component is encoded at this one
 -- boundary; the fixed separators and leading `c_` are legal by construction.
 \func joinDirs (ds : Array String) : String \elim ds
@@ -281,7 +240,7 @@
   | nil => (nil, env)
   | _ :: bs =>
     \let | nm => "g" ++ natToStr fieldIx ++ path
-         | st => jLocal true tObject nm (just (dataField dv fieldIx))
+         | st => jLocal true tObject nm (just (jIndex (jField dv "fields") (jIntLit fieldIx)))
          | r  => bindFields dv (suc fieldIx) bs (jVar nm :: env) path
     \in (st :: r.1, r.2)
 
@@ -307,34 +266,10 @@
 
   | const k => (nil, jCallStatic (mangleKername k) nil)
 
-  -- Application: flatten the left-nested binary spine `((f a) b) c` into ONE
-  -- call site (Malfunction's `Mapply_u`, done while compiling). `compileApp`
-  -- walks down the function side collecting already-compiled arguments, and
-  -- `applySpine` emits either the plain unary `.apply` (spine of length 1,
-  -- unchanged) or a single `Rt.app2`/`Rt.app3` dispatch.
   | app f a =>
-    \let oa => compileExpr env ("A" ++ path) a
-    \in compileApp env ("F" ++ path) f (oa.1 :: nil) (oa.2 :: nil)
-
-  -- Lambda nests compile to ONE anonymous class with a real multi-argument
-  -- entry point: 3+-deep nests to Rt.Fn3, 2-deep to Rt.Fn2, single lambdas to
-  -- Rt.Fn as before. The interfaces' default unary `apply` provides partial
-  -- application, so this is invisible to curried callers. Parameters read
-  -- outside-in (`p`, `q`, `s`), so the innermost binder is de Bruijn 0.
-  -- A deeper nest (arity 4+) is an Fn3 whose body returns the remaining
-  -- lambdas -- exactly matching applySpine's 3-argument chunking.
-  | lambda _ (lambda _ (lambda _ body)) =>
-    \let | pv => "p" ++ path
-         | qv => "q" ++ path
-         | sv => "s" ++ path
-         | ob => compileExpr (jVar sv :: jVar qv :: jVar pv :: env) ("L" ++ path) body
-    \in (nil, jAnonFn3 rtFn3 pv qv sv (appendStmts ob.1 (jReturn ob.2 :: nil)))
-
-  | lambda _ (lambda _ body) =>
-    \let | pv => "p" ++ path
-         | qv => "q" ++ path
-         | ob => compileExpr (jVar qv :: jVar pv :: env) ("L" ++ path) body
-    \in (nil, jAnonFn2 rtFn2 pv qv (appendStmts ob.1 (jReturn ob.2 :: nil)))
+    \let | of => compileExpr env ("F" ++ path) f
+         | oa => compileExpr env ("A" ++ path) a
+    \in (appendStmts of.1 oa.1, jInvoke (jCast rtFn of.2) "apply" (oa.2 :: nil))
 
   | lambda _ body =>
     \let | pv => "p" ++ path
@@ -350,7 +285,10 @@
   -- construct: recurse inline over the Array of args.
   | construct _ cidx args =>
     \let | results => mkArray {Out} {args.len} (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
-    \in (concatStmts results, dataNew cidx (map (\lam r => r.2) results))
+    \in (concatStmts results,
+         jNew rtData (jIntLit cidx ::
+                      jNewArrayInit tObject (map (\lam r => r.2) results) ::
+                      nil))
 
   -- case: switch on the scrutinee's tag; each branch binds fields[npars ..] then
   -- evaluates its body. We map inline over `brs i`, binding the body by pattern.
@@ -380,7 +318,8 @@
   | proj pinfo scrut =>
     \let | os => compileExpr env ("P" ++ path) scrut
     \in (os.1,
-         dataField (jCast rtData os.2) (pinfo.projParamCount Nat.+ pinfo.projFieldIdx))
+         jIndex (jField (jCast rtData os.2) "fields")
+                (jIntLit (pinfo.projParamCount Nat.+ pinfo.projFieldIdx)))
 
   -- fix: mutable Fn[] + knot-tying; map inline over `defs j`, projecting the
   -- body directly (`(defs j).defBody`), same reasoning as `case` above.
@@ -396,22 +335,6 @@
            concatStmtBlocks assigns,
          jIndex (jVar arr) (jIntLit idx))
 
--- Spine collector for `app` (mutual with compileExpr). Walks the FUNCTION side
--- of a left-nested application, compiling each argument as it is passed and
--- PREPENDING it, so the accumulators end up left-to-right; statements run in
--- head-then-arguments order. Termination: the `app` clause recurses on the
--- direct sub-term `f`, and the catch-all hands the SAME term to compileExpr --
--- every cycle through the compileExpr/compileApp SCC still strictly decreases
--- the LBTerm argument (compileExpr's `app` clause enters with the sub-term `f`).
-\func compileApp {tgt : JavaTarget} (env : Array JExpr) (path : String) (t : LBTerm)
-                 (argStmts : Array (Array JStmt)) (argExprs : Array JExpr) : Out \elim t
-  | app f a =>
-    \let oa => compileExpr env ("A" ++ path) a
-    \in compileApp env ("F" ++ path) f (oa.1 :: argStmts) (oa.2 :: argExprs)
-  | t =>
-    \let of => compileExpr env path t
-    \in (appendStmts of.1 (concatStmtBlocks argStmts), applySpine of.2 argExprs)
-
 
 -- ---------------------------------------------------------------------------
 -- Program assembly.
@@ -422,47 +345,27 @@
 \func constMethod (name : String) (body : Array JStmt) : JMember =>
   jMethod (\new JMethod true tObject name nil body)
 
--- NOT MEMOIZED, and measured: giving each constant a `private static Object
--- memo_c_foo` cell filled on the first call (`if (memo_c_foo == null) ..`) makes
--- `lean-deriv` SLOWER -- 38-40 s -> 41-43 s wall, 57 s -> 66 s CPU -- even
--- though it removes >2 GB of allocation (Lean's typeclass dictionaries, rebuilt
--- at every use because λ□ has no sharing of top-level definitions: `const k` is
--- a call). The JVM was already handling this better than a cache can: a freshly
--- built dictionary is a type-exact, non-escaping object, so escape analysis
--- deletes the allocation and the `apply` on it is monomorphic and inlined,
--- whereas a value loaded from a mutable static field has unknown type -- a real
--- virtual dispatch plus a memory load per use. (Same conclusion as the
--- pre-Fn2/Fn3 memoization experiment, now with allocation numbers to explain
--- it.) The `jIfNull`/`jStaticField` AST nodes the experiment needed were
--- removed again; a future *typed* dictionary hoist would reintroduce them.
-
-\func compileDecl {t : JavaTarget} (kd : \Sigma Kername GlobalDecl) : Array JMember =>
+\func compileDecl {t : JavaTarget} (kd : \Sigma Kername GlobalDecl) : JMember =>
   \let | name => mangleKername kd.1
   \in \case kd.2 \with {
     | constantDecl cb => \case cb.cstBody \with {
       | just body =>
         \let | o => compileExpr nil "" body
-        \in constMethod name (appendStmts o.1 (jReturn o.2 :: nil)) :: nil
+        \in constMethod name (appendStmts o.1 (jReturn o.2 :: nil))
       | nothing => \case lookupAxiom name javaAxioms \with {
-        -- An axiom's realization is a runtime constant already (`Rt.PRIM_ADD_LONG`),
-        -- so there is nothing to cache.
-        | just impl => constMethod name (jReturn impl :: nil) :: nil
+        | just impl => constMethod name (jReturn impl :: nil)
         | nothing =>
           constMethod name
             (jThrow (jNew (tClass "RuntimeException")
-                          (jStringLit ("axiom " ++ name ++ " not implemented") :: nil)) :: nil) :: nil
+                          (jStringLit ("axiom " ++ name ++ " not implemented") :: nil)) :: nil)
       }
     }
     | inductiveDecl _ =>
-      jMemberComment ("inductive " ++ name ++ ": erased; values use Data(tag, fields)") :: nil
+      jMemberComment ("inductive " ++ name ++ ": erased; values use Data(tag, fields)")
   }
 
 \func compileDecls {t : JavaTarget} (ds : GlobalDeclarations) : Array JMember =>
-  concatMembers (map (\lam d => compileDecl d) ds)
-
-\func concatMembers (ms : Array (Array JMember)) : Array JMember \elim ms
-  | nil => nil
-  | m :: ms => m ++A concatMembers ms
+  map (\lam d => compileDecl d) ds
 
 -- `__main` holds the program's body; `main` is the entry point printing it.
 --
