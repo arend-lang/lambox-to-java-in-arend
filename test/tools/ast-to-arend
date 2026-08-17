@@ -637,5 +637,27 @@ def main_():
     return 0
 
 
+def run_deeply(fn):
+    """Run `fn` with a recursion limit and a stack that fit deep lambda-box terms.
+
+    Both the parser and the renderer recurse once per term node, and a lambda-box
+    program is a single deeply nested term: a `List` literal of a few thousand
+    elements alone nests that deep in `ListLit.render`. CPython's default limit of
+    1000 frames is reached by real inputs -- `lean-binarytrees-peano` failed with
+    `RecursionError` -- and raising the limit alone is not enough, because the
+    interpreter then overflows the OS thread stack instead. Hence both: a high
+    limit, and a thread we create with a large stack (the main thread's stack size
+    cannot be changed from inside Python).
+    """
+    import threading
+    sys.setrecursionlimit(200000)
+    threading.stack_size(512 * 1024 * 1024)
+    out = []
+    t = threading.Thread(target=lambda: out.append(fn()))
+    t.start()
+    t.join()
+    return out[0] if out else 1
+
+
 if __name__ == '__main__':
-    sys.exit(main_())
+    sys.exit(run_deeply(main_))

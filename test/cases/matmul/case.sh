@@ -22,4 +22,5 @@ OCAML_EXTRA="prim_int63.mli prim_int63.ml matmul.mli"
 # All three backends agree here only because 130^3 stays far below 2^62: C/OCaml
 # implement genuine int63 (wrapping mod 2^63), the Java backend 64-bit long (or
 # BigInteger). See "Integer representation of the Java backend" in ../../README.md.
-NOTE="expected: 2197000 (= 130^3); backends agree only well below 2^62 (int63 mismatch)"
+EXPECTED=2197000
+NOTE="expected: $EXPECTED (= 130^3); backends agree only well below 2^62 (int63 mismatch)"

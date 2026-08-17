@@ -38,4 +38,5 @@ C_DRIVER=main.c
 OCAML_DRIVER=matmul_main.ml
 OCAML_MODULE=matmul
 OCAML_EXTRA="prim_int63.mli prim_int63.ml matmul.mli"
-NOTE="expected: $((MATMUL_SIZE * MATMUL_SIZE * MATMUL_SIZE)) (= $MATMUL_SIZE^3); backends agree only well below 2^62 (int63 mismatch)"
+EXPECTED=$((MATMUL_SIZE * MATMUL_SIZE * MATMUL_SIZE))
+NOTE="expected: $EXPECTED (= $MATMUL_SIZE^3); backends agree only well below 2^62 (int63 mismatch)"

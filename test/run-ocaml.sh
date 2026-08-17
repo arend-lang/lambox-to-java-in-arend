@@ -12,4 +12,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 dir=$(work_dir "$CASE_NAME" ocaml)
 
 "$here/build-ocaml.sh" "$CASE_NAME"
-"$here/run-timed.sh" "$CASE_NAME" ocaml -- "$dir/prog"
+# `ulimit -s` applies to processes started from this shell, hence the subshell;
+# see NATIVE_RUN_STACK in config.sh for why it is raised.
+(
+  ulimit -s "$NATIVE_RUN_STACK" 2>/dev/null || warn "could not set stack limit to $NATIVE_RUN_STACK"
+  "$here/run-timed.sh" "$CASE_NAME" ocaml -- "$dir/prog"
+)

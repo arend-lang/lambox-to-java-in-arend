@@ -2,7 +2,10 @@
 # run-all.sh [case...]
 #
 # Runs every case (or the given ones) on every backend it declares, continues
-# past failures, then prints the timing table and every backend's output.
+# past failures, then prints the timing table and every backend's output, and
+# finally checks the outputs against each other and against each case's
+# $EXPECTED (check-all.sh). Correctness used to be judged purely by eye here; the
+# check is a separate script, so the outputs are still printed either way.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,6 +28,8 @@ for case_name in $cases; do
 done
 
 "$here/summary.sh" $cases
+
+"$here/check-all.sh" $cases || failed="$failed check"
 
 if [ -n "$failed" ]; then
   warn "failed:$failed"

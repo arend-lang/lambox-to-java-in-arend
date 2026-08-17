@@ -12,4 +12,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 dir=$(work_dir "$CASE_NAME" c)
 
 "$here/build-c.sh" "$CASE_NAME"
-"$here/run-timed.sh" "$CASE_NAME" c -- "$dir/prog"
+# See NATIVE_RUN_STACK in config.sh: the generated C recurses as deeply as the
+# source program loops, exactly like the other backends.
+(
+  ulimit -s "$NATIVE_RUN_STACK" 2>/dev/null || warn "could not set stack limit to $NATIVE_RUN_STACK"
+  "$here/run-timed.sh" "$CASE_NAME" c -- "$dir/prog"
+)

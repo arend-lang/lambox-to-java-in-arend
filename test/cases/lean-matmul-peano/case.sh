@@ -45,4 +45,7 @@ OCAML_EXTRA="peanomm.mli"
 # The evaluator needs enough fuel; at size 20 this is comfortably above what the
 # program uses, and unused fuel only costs the allocation (~0.4 s per 1e7).
 : "${EVAL_FUEL:=30000000}"
-NOTE="expected: 1 (Bool.true: the 20x20 unary sum equals 20^3); eval prints 'constr Bool.true'"
+# The compiled backends print the constructor index, the `eval` backend a rendered
+# term (`constr Bool.true`), which is why check-case.sh does not diff `eval`.
+EXPECTED=1
+NOTE="expected: $EXPECTED (Bool.true: the 20x20 unary sum equals 20^3); eval prints 'constr Bool.true'"

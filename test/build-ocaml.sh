@@ -17,6 +17,12 @@
 # be `ocamlfind ocamlopt`, with $OCAML_FLAGS added to every invocation and
 # $OCAML_LINK_FLAGS only to the link step (`-package`/`-linkpkg`, as lean-deriv
 # needs for Zarith).
+#
+# $OCAML_EXTRA is a list of supporting files compiled, in the given order, before
+# the generated module. Each entry may be a bare name (taken from the case's own
+# directory) or a path (`$LEAN_OCAML_RT/nat.ml` for the shared Lean realizations,
+# see lean-ocaml-runtime/README.md); only its basename matters afterwards, since
+# ocamlopt derives the module name from the file name.
 set -euo pipefail
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/load-case.sh" "$@"
@@ -29,7 +35,13 @@ require_tool "$MALFUNCTION" "comes from the opam switch peregrine was built in; 
 [ -n "${OCAML_MODULE-}" ] || die "case $CASE_NAME declares no OCAML_MODULE"
 
 dir=$(work_dir "$CASE_NAME" ocaml)
-for f in ${OCAML_EXTRA-} "$OCAML_DRIVER"; do cp "$CASE_DIR/$f" "$dir/"; done
+# A relative entry is resolved against the case directory, an absolute one taken
+# as is; both end up in the work dir under their basename.
+copy_unit() { case $1 in /*) cp "$1" "$dir/" ;; *) cp "$CASE_DIR/$1" "$dir/" ;; esac; }
+extra_units=""
+for f in ${OCAML_EXTRA-}; do copy_unit "$f"; extra_units="$extra_units ${f##*/}"; done
+copy_unit "$OCAML_DRIVER"
+driver_unit=${OCAML_DRIVER##*/}
 
 timed "$CASE_NAME" ocaml extract      -- produce "${AST_PRODUCER-}"         "$dir/prog.ast"
 timed "$CASE_NAME" ocaml extract-attr -- produce "${ATTR_OCAML_PRODUCER-}" "$dir/prog-ocaml.attr"
@@ -40,16 +52,16 @@ timed "$CASE_NAME" ocaml peregrine -- "$PEREGRINE" ocaml \
 # Everything below runs inside the work dir: ocamlopt/malfunction derive module
 # names from file names and drop their artifacts next to the sources.
 link_units=""
-for f in ${OCAML_EXTRA-}; do
+for f in $extra_units; do
   case $f in *.ml) link_units="$link_units ${f%.ml}.cmx" ;; esac
 done
 
 build_ocaml() (
   cd "$dir"
-  for f in ${OCAML_EXTRA-}; do "${ocamlopt[@]}" -c "$f"; done
+  for f in $extra_units; do "${ocamlopt[@]}" -c "$f"; done
   "$MALFUNCTION" cmx "$OCAML_MODULE.mlf"
-  "${ocamlopt[@]}" -c "$OCAML_DRIVER"
-  "${ocamlopt[@]}" ${OCAML_LINK_FLAGS-} -o prog $link_units "$OCAML_MODULE.cmx" "${OCAML_DRIVER%.ml}.cmx"
+  "${ocamlopt[@]}" -c "$driver_unit"
+  "${ocamlopt[@]}" ${OCAML_LINK_FLAGS-} -o prog $link_units "$OCAML_MODULE.cmx" "${driver_unit%.ml}.cmx"
 )
 
 timed "$CASE_NAME" ocaml compile -- build_ocaml

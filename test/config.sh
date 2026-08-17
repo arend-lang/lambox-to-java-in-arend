@@ -98,6 +98,16 @@ fi
 : "${OCAMLOPT:=ocamlopt}"
 : "${MALFUNCTION:=malfunction}"
 
+# Stack limit (`ulimit -s`, in KB or `unlimited`) for RUNNING a natively compiled
+# program, i.e. the C and OCaml backends. Needed for the same reason the Java
+# backend sizes its own stack in `Rt.runMain`: λ□ `fix` becomes ordinary,
+# usually non-tail recursion in every backend, so a source-level loop is a call
+# chain as deep as its iteration count. Measured: `lean-const-fold` dies with
+# `Fatal error: exception Stack_overflow` at this machine's default 8 MB and
+# succeeds with the limit raised. Setting it here keeps the comparison about the
+# generated code rather than about each toolchain's default limit.
+: "${NATIVE_RUN_STACK:=unlimited}"
+
 # --- Peregrine's evaluator (the `eval` backend) -----------------------------
 # `peregrine eval` runs the program instead of compiling it, so it is a
 # reference/oracle backend. Its default fuel (10000 steps) is far too small for
@@ -112,6 +122,20 @@ fi
 : "${EVAL_FUEL:=10000000}"
 # `true` = the ANF evaluator (Peregrine's default), `false` = the direct λ□ one.
 : "${EVAL_ANF:=true}"
+
+# Drivers shared by the axiom-free ("Peano") Lean cases -- the C driver, the OCaml
+# driver, the generated module's .mli and an empty attributes file. Such a case is
+# the only kind of Lean program `peregrine c` and `peregrine eval` accept; see
+# lean-peano-drivers/README.md.
+: "${LEAN_PEANO_DRIVERS:=$TEST_DIR/lean-peano-drivers}"
+
+# Lean's own OCaml realizations of the primitives lean-to-lambdabox erases to
+# axioms (`Nat.add`, `Array.push`, `Eq.rec`, ...), copied verbatim from
+# lean-to-lambdabox; a case pulls them in with
+#   OCAML_EXTRA="$LEAN_OCAML_RT/nat.ml ..."
+# See lean-ocaml-runtime/README.md for what they are and why the module name
+# `Axioms` is the whole contract.
+: "${LEAN_OCAML_RT:=$TEST_DIR/lean-ocaml-runtime}"
 
 # --- Layout -----------------------------------------------------------------
 : "${WORK_DIR:=$TEST_DIR/work}"

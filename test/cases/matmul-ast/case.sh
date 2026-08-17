@@ -16,4 +16,5 @@
 BACKENDS="java"
 AST_PRODUCER="cat $CASE_DIR/prog.ast"
 JAVA_PRODUCER="import-ast $CASE_DIR/prog.ast MatmulAst && extract-arend Imported.MatmulAst:progJava$JAVA_DEF_SUFFIX"
-NOTE="expected: 2197000 (= 130^3), identical to the 'matmul' case"
+EXPECTED=2197000
+NOTE="expected: $EXPECTED (= 130^3), identical to the 'matmul' case"
