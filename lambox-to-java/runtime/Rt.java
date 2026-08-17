@@ -172,6 +172,58 @@ public final class Rt {
   // placeholder instead of a raw hashcode.
   public static final Object BOX = new Object();
 
+  // --- Entry point -----------------------------------------------------------
+  //
+  // WHY THE GENERATED `main` DOES NOT JUST PRINT `__main()`.
+  //
+  // λ□'s `fix` compiles to plain Java recursion, and the recursive call is
+  // usually NOT in tail position (building a list, `map`, `foldr`, the deriv
+  // tree walk), so evaluation depth is bounded by the thread stack. Passing
+  // `-Xss` to the launcher is not a dependable way to raise that bound: `-Xss`
+  // sizes threads the JVM creates, while the *primordial* thread running `main`
+  // gets its stack from the OS (`ulimit -s`, typically 8 MB) on several
+  // JVM/OS combinations. So a program that needs a deep stack would work or
+  // overflow depending on how it happened to be launched.
+  //
+  // Running the body on a thread we create ourselves makes the requested stack
+  // size a property of the generated program instead: the size below is honoured
+  // by every JVM, and it is still tunable without recompiling via
+  // `-Dlambox.stack=<bytes>`. This bounds depth, it does not remove the bound --
+  // making non-tail `fix` stack-independent needs CPS/heap-allocated frames, and
+  // is deliberately not attempted here (a trampoline would only flatten TAIL
+  // calls, which is not the recursion we see).
+  //
+  // The value is printed on that thread, since `toString` of a deep `Data` is
+  // recursive too. An exception is reported and turned into a non-zero exit
+  // status, so a stack overflow cannot look like success with no output.
+  public static final long STACK_BYTES =
+    Long.getLong("lambox.stack", 1L << 30).longValue();
+
+  public static void runMain(final Fn body) {
+    final Throwable[] failure = new Throwable[1];
+    Runnable r = new Runnable() {
+      public void run() {
+        try {
+          System.out.println(body.apply(BOX));
+        } catch (Throwable t) {
+          failure[0] = t;
+        }
+      }
+    };
+    Thread t = new Thread(null, r, "lambox-main", STACK_BYTES);
+    t.start();
+    try {
+      t.join();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new RuntimeException(e);
+    }
+    if (failure[0] != null) {
+      failure[0].printStackTrace();
+      System.exit(1);
+    }
+  }
+
   // --- Ill-formed input ------------------------------------------------------
   //
   // Two λ□ nodes have no Java value: a `bvar` whose de Bruijn index exceeds the

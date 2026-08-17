@@ -119,10 +119,10 @@ alias keeps the call sites readable.
 * Python 3 (`PYTHON`) for `tools/ast-to-arend`, needed only by the cases that
   import an external `.ast`; stdlib only, nothing to install.
 * A JDK (`JAVA`, `JAVAC`); `JAVA_STACK=-Xss1g` is required, since evaluating a
-  whole generated program during typechecking is stack-hungry, and
-  `JAVA_RUN_STACK=-Xss512m` is used when RUNNING a generated program: λ□ `fix`
-  compiles to plain recursion with no tail calls, so a source-level loop becomes
-  a call chain as deep as its iteration count.
+  whole generated program during typechecking is stack-hungry.
+  `JAVA_RUN_STACK=-Xss512m` is still passed when RUNNING a generated program, but
+  it is no longer what makes deep recursion work — the generated program sizes its
+  own stack now; see "Recursion depth" below.
 * The fixed Java runtime `Rt.java` (`Fn`, `Data`, `BOX`, the primitive int
   ops `PRIM_{ADD,MUL,SUB,EQB}_{INT,LONG}` and the `unbound`/`freeVar` failure
   helpers for ill-formed λ□ input) from
@@ -138,6 +138,58 @@ alias keeps the call sites readable.
   Peregrine was built in; `config.sh` puts `$OPAM_SWITCH_BIN` on `PATH`).
 
 Missing tools are reported by `require_tool` with a clear message.
+
+## Recursion depth (a documented limitation)
+
+λ□ `fix` compiles to **plain Java recursion**, and the recursive call is usually
+*not* in tail position (building a list, `map`, `foldr`, the `deriv` tree walk),
+so evaluation depth is bounded by the thread stack. This is a real difference from
+the backends we compare against: `peregrine c` and the OCaml/Malfunction backend
+are not bounded this way.
+
+The generated `main` therefore does not evaluate the body itself. It hands it to
+`Rt.runMain`, which runs *and prints* it on a thread it creates with an explicit
+stack size (`Rt.STACK_BYTES`, default **1 GiB**, overridable at run time with
+`-Dlambox.stack=<bytes>`), and turns an exception on that thread into a stack
+trace plus a non-zero exit status — so a `StackOverflowError` can never look like
+a successful run with no output:
+
+    public static void main(String[] args){
+      Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
+        return __main();
+      } });
+    }
+
+**Why not just pass `-Xss`.** `-Xss` sizes the threads the JVM creates, while the
+*primordial* thread that runs `main` may take its stack from the OS (`ulimit -s`,
+here 8 MB) — so the depth a program survived used to depend on how it happened to
+be launched, and on the JVM/OS combination. Measured on this machine (JDK 26,
+`ulimit -s` 8192, a probe with exactly the shape generated code produces: a
+non-tail recursive call building an `Rt.Data` node on the way out, ~48 bytes of
+stack per frame):
+
+| where the body runs | flags | max depth |
+|---|---|---:|
+| primordial `main` | none | **6 559** |
+| primordial `main` | `-Xss512m` | 11 182 642 |
+| `Rt.runMain` thread | none (8 MB probe) | 172 592 |
+| `Rt.runMain` thread | none (1 GiB default) | **22 367 452** |
+
+So without flags the old entry point overflowed after ~6.5k nested calls; the
+program now gets ~22 M by default, and the number is a property of the generated
+program rather than of the harness. `JAVA_RUN_STACK=-Xss512m` is kept because it
+also covers the printing thread and does no harm, but no case depends on it any
+more (verified: `lean-map`, which used to need it, runs with plain `java -cp …
+Prog`).
+
+**This bounds the depth, it does not remove the bound.** Making non-tail `fix`
+stack-independent needs CPS or heap-allocated frames — *not* a trampoline, which
+only flattens tail calls and so would not help the recursion we actually see, at
+the price of a thunk check on every call (dispatch is already 30–85% of samples in
+these workloads) and a much weaker correspondence between `JavaAst` and λ□
+evaluation. Deliberately deferred; the trigger to revisit is a benchmark we did
+not write failing on stack at 1 GiB, or the verification track reaching an
+evaluation relation that makes a CPS transform provable.
 
 ## Integer representation of the Java backend
 
@@ -759,6 +811,110 @@ loaded from a mutable `Object` field has unknown type, costing a real virtual
 dispatch plus a memory load at every use. The `jIfNull`/`jStaticField` AST nodes
 the experiment introduced were removed again with the rest of it; a future
 *typed* dictionary hoist would have to reintroduce them.
+
+### Known-arity calls and sunk match alternatives — 2x at runtime, but REVERTED
+
+**Verdict first: implemented, measured, and taken back out.** The two changes
+below make every arithmetic case 2x faster and remove both regressions recorded
+above, but they cost ~6x in *generation* time (`lean-deriv`: ~380 s to ~2400 s of
+Arend typechecking) and ~250 lines of analysis in `ToJava.ard`: a name-keyed
+arity table threaded through `compileExpr`/`compileApp`, plus an occurrence
+counter. At 1.3x of Peregrine's OCaml backend, another 2x did not justify that,
+so the generator is back to the simple `Rt.app2`/`app3` dispatch and plain `let`
+locals. The patch itself is preserved on the pushed branch
+`known-arity-and-sinking` (commit `9ae5f38`, branched off `05eabe4`), and the
+design is recorded here because it is correct and re-appliable once
+the generation cost is fixed (see the *Cost* paragraph); only the JVM flag
+finding in the next section was kept.
+
+Profiling the whole corpus (JFR, all cases regenerated) found two bottlenecks
+that the previous round had left, and each is a generator change only — no new
+runtime code, no new AST node:
+
+* `Rt.app2`/`app3` were the **hottest frame** of both matmul workloads (76.8% and
+  85.5% of samples). One shared static dispatcher is a single maximally
+  megamorphic call site: the JIT sees every callee in the program there and can
+  inline through none of them. This was the cause of the `matmul` 1.3x and
+  `lean-matmul` 1.4x regressions recorded above.
+* 92% of `lean-matmul`'s allocation (~13 GB in 4 s) was **three closures
+  allocated before a `switch` of which at most one is used**. Lean's matchers
+  compile to `let`-bound lambdas, one per alternative, all built on every call.
+
+1. **Call a known arity directly.** λ□ has no arity in its syntax, so the
+   generator derives it: a lambda nest's depth (we compile it ourselves), a
+   `fix` slot's body, an axiom's realization (a new third column in
+   `javaAxioms`: `Bin` = 2, `curry`/`EQ_REC` = 3), and a program-wide table of
+   top-level constants (`constArities`, built once in `compileClass` from each
+   body's leading lambdas). `Env` carries the arity of each de Bruijn index
+   alongside its expression. When a spine has at least that many arguments,
+   `applySpine` emits `((Rt.Fn2) f).apply(a, b)` — no `instanceof`, no static
+   helper, and a call site of its own that sees few receivers. Unknown heads
+   (0) keep the `Rt.app2`/`app3` fallback, so nothing depends on the analysis
+   being complete.
+2. **Sink a single-use `let`-bound lambda into its use site.** `occ` counts
+   occurrences of a de Bruijn index, counting an occurrence under a `lambda`/`fix`
+   binder as *two* (it would run once per call of that function, turning one
+   allocation into many). A `let` whose value is a lambda and whose body uses it
+   at most once is substituted instead of bound to a local, so the closure is
+   allocated only if that `switch` branch is reached. Nothing is duplicated (at
+   most one occurrence) and nothing observable is reordered — building a closure
+   has no other effect.
+
+Measured on the whole corpus (best of 3, same `Rt.java`, same JVM flags, every
+output identical to the previous build):
+
+| case | before | after | |
+|---|---:|---:|---|
+| `matmul` | 2079 ms | **1052 ms** | 2.0x |
+| `matmul-ast` | 2088 ms | **1024 ms** | 2.0x |
+| `matmul-bench` | 2101 ms | **1086 ms** | 1.9x |
+| `lean-matmul` | 3659 ms | **1793 ms** | 2.0x |
+| `lean-deriv` | 8639 ms | **6408 ms** | 1.35x |
+| `peano`, `peano-ast`, `example`, `lean-map`, `lean-matmul-peano` | 37–121 ms | 29–156 ms | JVM startup, no signal |
+
+With the change in, both documented regressions were gone: `matmul` was **1.4x
+faster than it ever was** (1.5 s before any of this work) and `lean-deriv` below
+Peregrine's OCaml
+backend (7.0 s on this machine). Codegen, `lean-deriv`: `Rt.app3` 176 → 102 and
+`Rt.app2` 233 → 206, replaced by 142 direct `(Rt.Fn3)` and 39 direct `(Rt.Fn2)`
+calls; `final Object l…` locals 45 → 27. `matmul`: `app2` 13 → 2, `app3` 5 → 1.
+
+**Cost — the reason for the revert: generation time.** `lean-deriv` (23k lines of
+imported λ□) went from ~380 s to ~2400 s of Arend typechecking. `headArity`
+compares mangled names against a list per call site — an O(n) lookup inside the
+O(n) walk — and `occ` re-walks a `let` body, so the analysis is quadratic in
+program size. It is gated to spines of ≥2 arguments, but that is not enough on a
+program this size. Small cases are unaffected (peano/matmul extraction unchanged
+at ~21–36 s), so the whole cost falls on the one *foreign* benchmark we have.
+
+If this is picked up again, fix the asymptotics *first*: an association tree (or a
+sorted array with binary search) keyed by mangled name for `constArities`, and one
+bottom-up occurrence pass instead of an `occ` walk per `let`. Only then
+re-measure — the runtime numbers above are reproducible; the generation cost is
+the only thing that has to change.
+
+### The 8000-bytecode JIT cliff — `-XX:-DontCompileHugeMethods`
+
+Worth knowing before measuring anything on generated Java. HotSpot refuses to
+JIT-compile a method larger than **8000 bytecodes** (`-XX:HugeMethodLimit`) and
+interprets it forever. The heuristic assumes such a method is a hand-written
+mistake; ours are machine-generated, and one Lean definition — `Deriv.Expr.mul`
+with its ten match alternatives — is naturally that big.
+
+`lean-deriv`'s `mul` sits at 7938 bytecodes, i.e. *right* at the edge. The two
+(now reverted) changes above grew it by 4%, to 8266, and the case became
+**2.6x slower**
+(8.0–9.6 s → 23.8–24.5 s) while every other case got 2x faster; JFR showed 80.7%
+of samples in that one method (it had been 21.3%). With
+`-XX:-DontCompileHugeMethods` the same class file runs in 5.1–7.0 s. The flag is
+therefore part of the harness (`JAVA_RUN_FLAGS` in `config.sh`, used by
+`run-java.sh`, `bench.sh` and `run-ast-suite.sh`); it is neutral on every case
+whose methods are small.
+
+The lesson generalizes: a code generator can cross this limit from a change that
+has nothing to do with performance, and the symptom (one hot method, a plausible
+story about allocation) looks exactly like an ordinary regression. `javap -c` on
+the hot class is the cheap check.
 
 ## Checking an exported program against Peregrine
 

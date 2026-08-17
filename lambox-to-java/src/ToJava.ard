@@ -465,13 +465,24 @@
   | m :: ms => m ++A concatMembers ms
 
 -- `__main` holds the program's body; `main` is the entry point printing it.
+--
+-- The body is not evaluated by `main` itself but handed to `Rt.runMain` as a
+-- one-argument closure (its argument is ignored, `Rt.BOX` is passed), which runs
+-- and prints it on a thread with an explicitly requested stack size. Reason: λ□
+-- `fix` compiles to plain, usually non-tail Java recursion, so evaluation depth
+-- is bounded by the stack -- and the stack of the primordial thread running
+-- `main` is set by the OS, not by the launcher's `-Xss`. Going through a thread
+-- we create makes the bound a property of the generated program (tunable with
+-- `-Dlambox.stack=<bytes>`) instead of a property of how it was launched; see
+-- `Rt.runMain`.
 \func compileMain {tgt : JavaTarget} (t : LBTerm) : Array JMember =>
   \let | o => compileExpr nil "" t
   \in constMethod "__main" (appendStmts o.1 (jReturn o.2 :: nil)) ::
       jMethod (\new JMethod true tVoid "main"
                  ((\new JParam (tArray (tClass "String")) "args") :: nil)
-                 (jExprStmt (jInvoke (jStatic "System.out") "println"
-                                     (jCallStatic "__main" nil :: nil)) :: nil)) ::
+                 (jExprStmt (jCallStatic (rt ++ "runMain")
+                              (jAnonFn rtFn "ignored"
+                                 (jReturn (jCallStatic "__main" nil) :: nil) :: nil)) :: nil)) ::
       nil
 
 -- Only the program-specific class is generated; `Fn`, `Data` (with its
