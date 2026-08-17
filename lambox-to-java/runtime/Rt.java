@@ -563,23 +563,45 @@ public final class Rt {
   // application gets its own array, so a partially applied operation stays a
   // value that can be shared.
   //
-  // The collector implements Fn3, so a flattened call site (`Rt.app3`) hands it
-  // THREE arguments at a time: one array and one closure per chunk instead of
-  // per argument. That matters because these axioms have high arity (`EQ_REC`
-  // is 6, `ARRAY_SWAP` 6): profiling `lean-deriv` attributed 4.8 GB of garbage
-  // -- 15% of all allocation -- to the old one-argument-at-a-time collector,
-  // all of it reached from `Rt.app3`.
+  // The collector implements Fn2/Fn3, so a flattened call site (`Rt.app2`/
+  // `Rt.app3`) hands it two or three arguments at a time: one array and one
+  // closure per chunk instead of per argument. That matters because these axioms
+  // have high arity (`EQ_REC` is 6, `ARRAY_SWAP` 6): profiling `lean-deriv`
+  // attributed 4.8 GB of garbage -- 15% of all allocation -- to the old
+  // one-argument-at-a-time collector, all of it reached from `Rt.app3`.
+  //
+  // THE INTERFACE MUST MATCH THE ARGUMENTS STILL MISSING, not just be the widest
+  // one available. `Rt.app2` treats an `Fn3` as a genuine partial application and
+  // returns a one-argument closure, so a collector that advertised `Fn3` while
+  // needing only two more arguments turned a saturated 2-argument call site into
+  // a closure -- silently, since the closure is a perfectly good `Object`. It
+  // then blew up far away, in whatever consumed the result: `lean-qsort` (the
+  // first case using `Array.size`, arity 2) died with a ClassCastException inside
+  // `Nat.sub`. Hence the three-way split below; `step` still handles arriving
+  // chunks that over- or under-shoot.
   private static Fn curry(final int arity, final Op op) {
     return curry(arity, op, new Object[0]);
   }
 
   private static Fn curry(final int arity, final Op op, final Object[] got) {
-    return new Fn3() {
+    final int missing = arity - got.length;
+    if (missing >= 3) {
+      return new Fn3() {
+        public Object apply(Object x) { return step(arity, op, got, new Object[] { x }); }
+        public Object apply(Object x, Object y) { return step(arity, op, got, new Object[] { x, y }); }
+        public Object apply(Object x, Object y, Object z) {
+          return step(arity, op, got, new Object[] { x, y, z });
+        }
+      };
+    }
+    if (missing == 2) {
+      return new Fn2() {
+        public Object apply(Object x) { return step(arity, op, got, new Object[] { x }); }
+        public Object apply(Object x, Object y) { return step(arity, op, got, new Object[] { x, y }); }
+      };
+    }
+    return new Fn() {
       public Object apply(Object x) { return step(arity, op, got, new Object[] { x }); }
-      public Object apply(Object x, Object y) { return step(arity, op, got, new Object[] { x, y }); }
-      public Object apply(Object x, Object y, Object z) {
-        return step(arity, op, got, new Object[] { x, y, z });
-      }
     };
   }
 
