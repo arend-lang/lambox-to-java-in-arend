@@ -86,7 +86,7 @@
 -- FUTURE WORK: a third `targetInt63` value whose literals and
 -- `Rt.PRIM_*` ops normalize mod 2^63 (following `Uint63`), which is the only
 -- one that could be proved to agree with λ□'s evaluation relation once that
--- exists. See LambdaBox.ard's `PrimModel` and RESEARCH_AND_PLAN.md.
+-- exists. See LambdaBox.ard's `PrimModel` and notes/RESEARCH_AND_PLAN.md.
 --
 -- Everything below is parameterized by this choice; there is no default hidden
 -- inside the generator (see `compileProgramWith` / `compileProgram`).

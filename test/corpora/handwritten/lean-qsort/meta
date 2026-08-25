@@ -1,0 +1,26 @@
+# `qsort` from Lean 4's own code-generator benchmarks, as shipped by
+# lean-to-lambdabox (benchmarks/FromLeanCommon/qsort.lean, revision 58701f8): for
+# each i < n it fills an array with a bad LCG, sorts it in place with Lean's
+# `Array.qsort`, and checks the result is sorted. NOT our program: qsort.lean is a
+# verbatim copy, prog.lean only closes it over its input, and prog.ast is its
+# unmodified λ□ output.
+#
+# Why it is worth having: it is the program that uses Lean's ARRAY primitives
+# (`Array.get!Internal`, `Array.set!`, `Array.push`, `Array.size` ...), i.e. the
+# part of `javaAxioms` that nothing else touched. Our Java realizes them
+# persistently in `Rt`, upstream's OCaml uses J.-C. Filliâtre's persistent arrays
+# (runtime/lean/LeanArray.ml) — two independent implementations of the same axioms,
+# on a program that permutes an array 200 times.
+#
+# Caveat on the oracle: the program returns the NUMBER OF UNSORTED RESULTS, so the
+# expected value is 0. That is a weak check (a backend that broke the comparison
+# could still report 0), so treat this program primarily as an axiom-coverage and
+# performance one, and lean-const-fold/lean-deriv/lean-binarytrees as the
+# value-carrying ones.
+#
+# Input 200 instead of upstream's 1000: cost is quadratic in n here.
+expected=0
+backends=java ocaml
+runtime=lean
+xfail=
+note=number of arrays that came back unsorted; upstream qsort at n=200 (weak oracle)

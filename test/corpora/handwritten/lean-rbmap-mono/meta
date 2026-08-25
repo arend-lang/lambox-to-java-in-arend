@@ -1,0 +1,25 @@
+# `rbmap_mono` from Lean 4's own code-generator benchmarks, as shipped by
+# lean-to-lambdabox (benchmarks/FromLeanCommon/rbmap_mono.lean, revision
+# 58701f8): inserts n keys into a red-black map carrying its own well-formedness
+# proof, then folds over it counting the `true` values. NOT our program:
+# rbmap_mono.lean is a verbatim copy, prog.lean only closes it over its input, and
+# prog.ast is its unmodified λ□ output.
+#
+# Why it is worth having: it is the corpus' only balanced-tree workload, i.e. deep
+# pattern matching over a 5-constructor inductive with rebalancing — many small
+# `Rt.Data` nodes, short-lived, plus the erased proof component (the map is a
+# subtype ⟨tree, wellFormed⟩, so this also exercises how □ arguments survive
+# erasure).
+#
+# There is no axiom-free (`-peano`) variant, and it is the one benchmark that
+# cannot have one: `preferLogical` still leaves `.False.rec` behind, because the
+# map carries a well-formedness proof and the absurd-case eliminator survives
+# erasure. See ../../../runtime/peano/README.md.
+#
+# Input 20000 instead of upstream's 1000000: 1e6 insertions is minutes per
+# backend, and the shape of the work does not change with n.
+expected=2000
+backends=java ocaml
+runtime=lean
+xfail=
+note=#{k < 20000 | k % 10 == 0}; upstream rbmap_mono at n=20000

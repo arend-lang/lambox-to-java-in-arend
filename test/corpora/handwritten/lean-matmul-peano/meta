@@ -1,0 +1,40 @@
+# 20x20 all-ones matrix multiplication and summation over UNARY (Peano) natural
+# numbers, written in Lean and extracted by lean-to-lambdabox with
+#
+#   config { nat := .peano, extern := .preferLogical }
+#
+# i.e. Lean's `Nat` stays an inductive type and `Nat.add`/`mul`/`beq` are erased
+# from their logical definitions instead of being left as @[extern] axioms. This
+# program is why the axiom-free variants exist at all: the prim-int ../matmul/
+# program cannot be run by `peregrine c`/`peregrine eval`, because `--attributes`
+# remaps an axiom onto a native C/OCaml symbol they have no implementation for
+# (`Eprim: prim not found`). An axiom-free program needs no attributes, so every
+# backend runs the very same file.
+#
+# The result is a `Bool` (`Nat.beq sum (size*size*size)`) rather than the sum
+# itself, on purpose: a unary 8000 is an 8000-deep term and every backend renders
+# a value with per-level indentation, so printing it would cost more than
+# computing it and the measurement would be about the printer. As a Bool,
+# runtime/peano/main.c's `>> 1` and the OCaml driver both print the constructor's
+# ordinal among the nullary constructors of `false | true`, i.e. 1; our Java
+# prints the same tag.
+#
+# It used to carry its own main.c/peanomm_main.ml/peanomm.mli; main.c was
+# byte-identical to ../../../runtime/peano/main.c and the two OCaml files differed
+# from bench_main.ml/bench.mli only in the module name, so it now shares the
+# bundle under the module name `bench`.
+#
+# Regenerate prog.ast (the file is otherwise unmodified):
+#   cp prog.lean $HOME/lean-to-lambdabox/MatMulPeano.lean
+#   cd $HOME/lean-to-lambdabox && $HOME/.elan/bin/lake env lean MatMulPeano.lean
+#   cp prog.ast <this directory>/prog.ast
+# Change `def size` in prog.lean to scale it.
+#
+# The second program to run while working, and the complement of ../matmul/ --
+# same computation with no primitives and no attributes at all, so a break in
+# the axiom/attribute machinery shows up as one of the two going red, not both.
+expected=1
+backends=java ocaml c
+runtime=peano
+xfail=
+note=Bool.true, i.e. the 20x20 unary sum equals 20^3; every backend prints the constructor ordinal

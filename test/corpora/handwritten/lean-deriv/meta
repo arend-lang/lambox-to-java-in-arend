@@ -1,0 +1,32 @@
+# `deriv` from Lean 4's own code-generator benchmarks, as shipped by
+# lean-to-lambdabox (benchmarks/FromLeanCommon/deriv.lean, revision 58701f8):
+# symbolic differentiation of `x^x` nested 10 times, then counting the nodes of
+# the result. NOT one of our programs -- deriv.lean is a verbatim copy, prog.ast
+# is its unmodified λ□ output, and prog.lean only closes it over the input (10)
+# the benchmark manifest uses.
+#
+# It is the heaviest program our pipeline handles: the one program in the whole
+# Lean corpus that costs tens of seconds rather than seconds, both to compile and
+# to run. It is also the program that motivated the `-XX:-DontCompileHugeMethods`
+# run flag: its `mul` sits at ~8.0k bytecodes, right at HotSpot's default refusal
+# to JIT a method over 8000 bytecodes, and crossing that limit is a cliff
+# (23.8-24.5 s without the flag versus 5.1-7.0 s with it).
+#
+# The 13 Lean primitives it leaves as axioms are what makes it interesting across
+# backends: our Java realizes them in the runtime (`javaAxioms` in ToJava.ard ->
+# runtime/Rt.java), Peregrine's OCaml backend expects a module named `Axioms` and
+# gets lean-to-lambdabox's own Zarith-based realizations (../../../runtime/lean/).
+# There is NO `c` backend: `peregrine c` rejects the program outright ("Axioms
+# found, use Extract Constant to realize them in C") and nobody upstream has
+# written C realizations -- they would have to allocate (`Decidable`) through the
+# CertiRocq GC. That is a real gap, not an oversight.
+#
+# It used to use its own copies of the OCaml realizations under the module name
+# `deriv`; they were identical to ../../../runtime/lean/ except for a trimmed
+# `axioms.ml` (no LeanArray, which this program does not use), so it now shares
+# the bundle under the module name `bench`.
+expected=40230090
+backends=java ocaml
+runtime=lean
+xfail=
+note=upstream deriv at n=10; the corpus' slowest program

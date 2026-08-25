@@ -23,7 +23,7 @@
 -- (`runtime/Rt.java`) and appears here only as referenced names, never as
 -- declarations.
 --
--- COMPARE (rationale and the longer survey live in RESEARCH_AND_PLAN.md):
+-- COMPARE (rationale and the longer survey live in notes/RESEARCH_AND_PLAN.md):
 --   * Malfunction.v (metarocq-malfunction) -- the verified λ□ backend; its
 --     `Ident.t := string` / `Longident.t := string` split is `JIdent`/`JQIdent`
 --     below, and its `Mvar`/`Mglobal` split is `jVar`/`jStatic`.

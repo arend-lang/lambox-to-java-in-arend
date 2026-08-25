@@ -1,0 +1,39 @@
+# The reference value of each lean-to-lambdabox benchmark AT INPUT 10, i.e. at
+# tools/extract-lean-benchmarks.sh's default $LEAN_BENCH_INPUT -- regenerate both
+# together or neither. Two columns: benchmark name, value.
+#
+# The oracle is LEAN ITSELF, not an earlier run of this harness: upstream
+# documents no answers (its Makefile only times the programs), so the value is
+# what `#eval <benchmark> 10` prints when elaborated against the built benchmark
+# library. Reproduce with one `#eval` per line in a file importing
+# FromLeanCommon, at the revision test/README.md records:
+#
+#     cd ~/lean-to-lambdabox
+#     LEAN_PATH=$PWD/benchmarks/.lake/build/lib/lean \
+#       ~/.elan/bin/lake env lean RefValues.lean
+#
+# Only the `Nat`-valued benchmarks are here. `unit`, `demo0`, `demo1`, `demo1_tc`
+# and `demo2` return `Unit` or a list, which Lean and our Java `Rt.Data` printer
+# spell differently -- their row deliberately has no `expected` value and is
+# covered by oracles 2 and 3 instead.
+binarytrees	137242
+const_fold	4772
+cube	27000000
+deriv	40230090
+even	1
+iflazy	42
+list_sum_foldl	10
+list_sum_foldr	10
+list_sum_rev	10
+qsort	0
+qsort_fin	0
+qsort_single	0
+rbmap_beans	1
+rbmap_mono	1
+rbmap_raw	1
+rbmap_std	1
+triangle_acc	45
+triangle_foldl	45
+triangle_rec	45
+unionfind	0
+unionfind_noinline	0

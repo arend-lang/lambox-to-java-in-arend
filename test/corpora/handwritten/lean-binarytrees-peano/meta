@@ -1,0 +1,17 @@
+# The upstream `binarytrees` benchmark (see ../lean-binarytrees/) erased WITHOUT
+# axioms: `config { nat := .peano, extern := .preferLogical }`. See
+# ../../../runtime/peano/README.md for why an axiom-free variant exists at all --
+# it is the only way `peregrine c` will touch a Lean program.
+#
+# Input 8 (not 12): the tree count grows exponentially and the naturals are unary.
+# The result is `Nat.beq (binarytrees 8) 26128`, 26128 being Lean's own answer
+# (confirmed with its native compiler), written as `163*160+48` in prog.lean.
+#
+# This is the corpus' only allocation-dominated program that all three backends
+# run, so it is the fairest place to compare `Rt.Data` (one JVM object per node)
+# against CertiRocq's GC and OCaml's minor heap.
+expected=1
+backends=java ocaml c
+runtime=peano
+xfail=
+note=Bool.true, i.e. binarytrees 8 = 26128; every backend prints the constructor ordinal

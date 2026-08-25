@@ -1,0 +1,41 @@
+# The expected value of each fixture of the `peregrine` corpus, in the syntax our
+# Java `Rt.Data` renderer prints: a constructor is its DECLARATION INDEX in its
+# own inductive type, its arguments follow in parentheses, separated by commas.
+# Two columns, whitespace-separated: fixture name, value. Everything after the
+# value on a line is a comment (corpora/peregrine.sh reads the second field).
+#
+# The oracle is UPSTREAM, at revision 247d495 (~/peregrine-tool), and it comes in
+# two strengths -- which one applies is written on each line:
+#
+#   [upstream]  peregrine's own recorded answer in test/src/tests.ts
+#               (`expected_output`), spelled in the OCaml backend's printer
+#               syntax, with each constructor name replaced by its index.
+#               Only Nat, Mutual and OddEven have one; the `_typed` twin of a
+#               fixture shares it (same program, type annotations erased).
+#   [source]    derived by hand from the upstream ROCQ/LEAN SOURCE
+#               (test/rocq/theories/*.v, test/lean/src/*.lean) when tests.ts
+#               records none. Still external -- it uses only what the program
+#               computes and the order its constructors are declared in -- but
+#               one derivation step further from upstream's own string.
+#
+# The indices are per program, not universal: OddEven, Demo and lean/Demo each
+# declare their OWN `Bool` with `false` FIRST, so false = 0 and true = 1, the
+# opposite of Rocq's stdlib `bool`. Rocq's stdlib `nat` is O = 0, S = 1 and its
+# `list` is nil = 0, cons = 1; the Lean fixtures declare `Nat_` (zero, suc) and
+# `List_` (empty, cons) in that order, giving the same indices.
+#
+# A fixture with no line here gets no expected value and is reported check=none.
+peregrine-lean-demo	1(1,1(0,1(1,1(0,0))))	# [source] Demo.lean: test = cons true (cons false (cons true (cons false empty)))
+peregrine-lean-map	1(1(1(0)),1(1(1(1(1(1(1(0)))))),1(1(1(1(1(1(1(1(1(1(1(0)))))))))),0)))	# [source] Map.lean: ys = map double [1,3,5] = [2,6,10]
+peregrine-rocq-demo	1(1,1(0,1(1,1(0,0))))	# [source] Demo.v: test = cons true (cons false (cons true (cons false empty)))
+peregrine-rocq-demo_typed	1(1,1(0,1(1,1(0,0))))	# [source] as rocq-demo
+peregrine-rocq-hello	1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0))))))))))))))))))))))))))))))))),0))))))	# [source] Hello.v: hello = [72;101;108;108;111;33] as a list of UNARY nats ("Hello!")
+peregrine-rocq-hello_typed	1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))),1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(1(0))))))))))))))))))))))))))))))))),0))))))	# [source] as rocq-hello
+peregrine-rocq-map	1(1(1(0)),1(1(1(1(1(1(1(0)))))),1(1(1(1(1(1(1(1(1(1(1(0)))))))))),0)))	# [source] Map.v: ys = map double [1;3;5] = [2;6;10]
+peregrine-rocq-map_typed	1(1(1(0)),1(1(1(1(1(1(1(0)))))),1(1(1(1(1(1(1(1(1(1(1(0)))))))))),0)))	# [source] as rocq-map
+peregrine-rocq-mutual	1(0)	# [upstream] (S O)
+peregrine-rocq-mutual_typed	1(0)	# [upstream] (S O)
+peregrine-rocq-nat	1(1(1(0)))	# [upstream] (S (S (S O)))
+peregrine-rocq-nat_typed	1(1(1(0)))	# [upstream] (S (S (S O)))
+peregrine-rocq-oddeven	0	# [upstream] false -- Bool declares false FIRST, so index 0
+peregrine-rocq-oddeven_typed	0	# [upstream] false

@@ -1,0 +1,29 @@
+# Upstream Peregrine lean-to-lambdabox test/lean/src/Map.lean, revision
+# 247d495638667cb855f43855775c6feb462e8121. Only the #erase output path is
+# adapted so the checked-in prog.lean regenerates this program's prog.ast.
+#
+# The program is axiom-free, which used to make it the cheapest way to run
+# Peregrine's evaluator as a reference semantics. `eval` has since left the
+# backend matrix (its output is a rendered λ□ term, `constr List_.cons ...`
+# against our `1(...)`, and normalizing that is deferred); the capability lives on
+# in test/tools/eval-ast.sh, which is worth pointing at this program.
+#
+# No `ocaml`/`c`: the result is constructor DATA and both native drivers can only
+# print a scalar (see ../../../runtime/peano/README.md).
+#
+# The expected value is derived from prog.lean, by hand, using nothing but its
+# constructor DECLARATION ORDER -- which is what our Rt.Data renderer prints and
+# what makes this an external oracle rather than a copy of our output:
+#
+#   List_ : empty = 0, cons = 1        Nat_ : zero = 0, suc = 1
+#   xs = [1, 3, 5]  ->  ys = map double xs = [2, 6, 10]
+#   2 = 1(1(0)), 6 = 1^6(0), 10 = 1^10(0)
+#   ys = cons 2 (cons 6 (cons 10 empty)) = 1(2, 1(6, 1(10, 0)))
+#
+# run.py deletes whitespace before comparing, so the multi-line indentation our
+# printer adds does not appear here.
+expected=1(1(1(0)),1(1(1(1(1(1(1(0)))))),1(1(1(1(1(1(1(1(1(1(1(0)))))))))),0)))
+backends=java
+runtime=
+xfail=
+note=Peano list [2, 6, 10]; official Peregrine Lean Map test

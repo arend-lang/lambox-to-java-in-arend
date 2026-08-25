@@ -1,0 +1,24 @@
+# The upstream `const_fold` benchmark (see ../lean-const-fold/) erased WITHOUT
+# axioms: `config { nat := .peano, extern := .preferLogical }`, i.e. unary
+# naturals and Lean's arithmetic taken from its logical definitions.
+#
+# Why the same benchmark twice: the axiom version compares OUR realizations of
+# Lean's primitives against Lean's own OCaml ones, but `peregrine c` rejects it.
+# This version has no axioms, so all three backends compile the identical λ□ file
+# -- the only configuration in which the C backend ever sees a Lean program. See
+# ../../../runtime/peano/README.md.
+#
+# Input 10 (not 20): unary arithmetic, so everything is smaller here. The result
+# is `Nat.beq (const_fold 10) 4772`, and 4772 is Lean's own answer (confirmed with
+# its native compiler), written as `68*70+12` in prog.lean for the reason
+# documented there.
+#
+# Note on the native backends' stack: this is the program that dies with
+# `Fatal error: exception Stack_overflow` at this machine's default 8 MB limit and
+# succeeds with it raised -- λ□ `fix` becomes ordinary non-tail recursion in every
+# backend, so a source-level loop is a call chain as deep as its iteration count.
+expected=1
+backends=java ocaml c
+runtime=peano
+xfail=
+note=Bool.true, i.e. const_fold 10 = 4772; every backend prints the constructor ordinal

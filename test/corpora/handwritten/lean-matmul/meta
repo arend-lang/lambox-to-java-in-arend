@@ -1,0 +1,18 @@
+# 130x130 all-ones matrix multiplication and result summation, written in Lean
+# and extracted by lean-to-lambdabox. The checked-in prog.lean is the source;
+# prog.ast is its generated, otherwise unmodified λ□ output.
+#
+# Nat is Lean's, i.e. the four arithmetic primitives survive erasure as λ□ axioms
+# (.Nat.add/.sub/.beq/.mul) -- so this program runs on the same shared
+# realizations as the other axiom Lean programs (Zarith, ../../../runtime/lean/)
+# and the two backends realize those axioms independently. No `c`: `peregrine c`
+# rejects a program with axioms outright, and no upstream C realizations exist.
+#
+# Worth having next to ../matmul/: the same 130^3 answer reached over Lean's
+# arbitrary-precision `Nat` instead of over λ□ primitive int63, i.e. an
+# INDEPENDENT extraction of the same arithmetic.
+expected=2197000
+backends=java ocaml
+runtime=lean
+xfail=
+note=130^3, independently extracted from Lean over Lean's own Nat
