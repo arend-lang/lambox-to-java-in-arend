@@ -23,7 +23,15 @@ STAGES_DIR="$TEST_DIR/stages"
 # String implementation, not in a release yet. arend.yaml declares
 # langVersion: 1.12, so the jar must be a 1.12 build.
 AREND_JAR="$HOME/arend-lang-bibin/cli/build/libs/cli-1.12.0-full.jar"
-AREND_PROJECT="$ROOT/lambox-to-java"
+# The ONE environment override in this file, and not an exception to the rule
+# above: it is not a tool path made configurable for convenience, it is what
+# lets `run.py --jobs N` give each worker a PRIVATE copy of the project.
+# Concurrency needs it because a java `gen` is not read-only with respect to the
+# project -- `tools/import-ast.sh` writes `src/Imported/<Module>.ard` and
+# `tools/extract-arend.sh` does `rm -rf "$project/bin"`, so two workers sharing
+# one project would clear each other's cache mid-run. Unset (the normal case)
+# means the real project, and serial runs behave exactly as before.
+AREND_PROJECT="${AREND_PROJECT:-$ROOT/lambox-to-java}"
 # The three hand-written example programs (Example*.ard, ExamplePrint.ard)
 # live in their own Arend project so they don't clutter the compiler's
 # sources; it depends on lambox-to-java, resolved via two -L search roots

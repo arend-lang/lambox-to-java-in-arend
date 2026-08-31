@@ -22,9 +22,50 @@ moves on this machine) rather than configurable through the environment:
 Arend CLI (a **development** 1.12 build), a JDK, Peregrine, Python 3, OCaml
 (`ocamlopt`/`malfunction`), and gcc plus the CertiRocq runtime.
 
-## Usage
+## Two checks, and which one to reach for
 
-    test/run.py [PROGRAM...] [--all] [--repeat N] [--timeout S]
+There are two scripts, and they answer different questions:
+
+| | question | cost |
+|---|---|---|
+| `golden.py` | did the **generated Java** change? | 35 s |
+| `run.py` | does the compiled program compute the **right value**? | ~30 min for `--all` |
+
+Most changes to `ToJava.ard` / `JavaPrint.ard` need only the first, so that is
+the inner loop: `golden.py` runs no peregrine, no `javac`, and executes no
+program. Run `run.py --all` before a commit, because a golden diff cannot tell
+you that the code it blessed still *runs* — see `golden.py`'s own docstring for
+why keeping both is the point rather than redundancy.
+
+## Usage: golden.py
+
+    test/golden.py [PROGRAM...] [--set smoke|cover|all] [--update] [--jobs N] [--list]
+
+Regenerates the Java for a few programs in ONE Arend invocation and diffs it
+against `golden/<program>.java`, which is committed. `--update` accepts the
+current output *and prints the diff it is accepting*, so blessing a change is
+visible both in the terminal and afterwards in `git diff`.
+
+* `--set smoke` (default) — four programs, 3.2k lines of λ□ (1.6 % of the
+  corpus), 35 s. Chosen by set cover over the features observable in generated
+  Java, minimized by input size; each program's reason is recorded next to it in
+  `golden.py`. **Do not prune the set by size** — three of the four are the
+  cheapest program in the corpus exhibiting their feature.
+* `--set cover` — adds `lean-deriv`, the only program (with `leanbench-deriv`)
+  reaching `Rt.EQ_REC` and the `Rt.INT_*` family. Complete coverage, but 185 s,
+  because that one program is 23k lines.
+* `--jobs N` — shards across N Arend processes. **Measured to lose** on these
+  sets (12 small programs: 31 s with 1 shard, 82 s with 4): each shard pays ~25 s
+  of JVM start, arend-lib load and typechecking `ToJava.ard`, which dominates.
+  Only `--set all` is expected to gain. Default 1.
+
+Not covered by any set, because no corpus program exercises it: λ□ `proj`
+(**zero** occurrences across all 68 programs), `fvar`, and an unguarded `fix`
+body. Closing that needs a hand-written λ□ term, not a wider corpus.
+
+## Usage: run.py
+
+    test/run.py [PROGRAM...] [--all] [--repeat N] [--jobs N] [--timeout S]
 
 Selection is program names, and nothing else. With no name and no `--all` the
 run lists what there is (name, backends, corpus, note) and stops; an unknown
@@ -34,6 +75,14 @@ backend cannot use the differential oracle (see below).
 
 * `--repeat N` — run the RUN stage N times and keep the best time; generation
   and build are deterministic and are paid once.
+* `--jobs N` — run N programs concurrently, and **do not record** anything.
+  Worth about 1.4x on this machine (4 programs: 102 s serial, 71 s at `-j 4`) —
+  less than the core count suggests, because one Arend generation already uses
+  ~2.7 cores, so a few concurrent ones saturate the box. It refuses to combine
+  with `--repeat > 1`, and it skips `results.tsv` entirely: that file's timing
+  columns are what `benchmarks.md` quotes, and a contended number is not
+  comparable to anything (an unchanged binary has measured 15.0 s and 9.9 s an
+  hour apart on this machine). Use it for a correctness sweep, never for timing.
 * `--timeout S` — per-stage timeout in seconds (default 300; java generation is
   30-60 s on this corpus). The stage runs in its own process group, so a
   timeout kills the compiled program too.
@@ -43,8 +92,9 @@ program disagreed. Every program appends one row to `results.tsv`; the scratch
 of a run (generated code, binaries, `output.txt`) is in
 `work/<program>/<backend>/`.
 
-While iterating, two programs are worth running (about two minutes together,
-most of it java generation):
+While iterating, prefer `test/golden.py` (35 s). When a value needs checking,
+two programs are worth running (about two minutes together, most of it java
+generation):
 
     test/run.py matmul lean-matmul-peano
 
@@ -56,6 +106,8 @@ Everything else belongs to `--all` before a commit.
 ## Layout
 
     run.py         the driver: the matrix, the timing, the statuses, the table
+    golden.py      the fast check: generated Java vs golden/, one Arend run
+    golden/        committed expected output, one .java per program
     lib.sh         tool paths (hard-coded) + require_tool + run_cmd helpers
     stages/        one script per backend: java.sh, ocaml.sh, c.sh, each
                    taking `gen|build|run` as its first argument

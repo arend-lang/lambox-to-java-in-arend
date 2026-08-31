@@ -9,3 +9,6 @@
 /.idea/
 /scratch/
 /notes/
+
+# Python bytecode from test/golden.py importing test/run.py
+__pycache__/

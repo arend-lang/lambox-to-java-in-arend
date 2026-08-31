@@ -4,6 +4,10 @@
     test/run.py                      # list the program names, run nothing
     test/run.py matmul peano         # run exactly these
     test/run.py --all                # every program of every corpus
+    test/run.py --all -j 6           # ... concurrently, without recording times
+
+For "did the generated code change" rather than "is the value still right", use
+test/golden.py: it is ~50x faster because it runs neither javac nor the program.
 
 It discovers programs by RUNNING corpora/*.sh (each prints TSV rows), runs the
 stage scripts of each backend with a timeout, times them, and appends ONE row
@@ -24,10 +28,14 @@ import argparse
 import difflib
 import hashlib
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +44,7 @@ CORPORA_DIR = TEST_DIR / "corpora"
 STAGES_DIR = TEST_DIR / "stages"
 WORK_DIR = TEST_DIR / "work"
 RESULTS = TEST_DIR / "results.tsv"
+AREND_PROJECT = TEST_DIR.parent / "lambox-to-java"
 
 # The whole pipeline, as data. A stage's arguments are derived from the program
 # row (Program.stage_args); nothing per-program is ever a command string. One
@@ -140,7 +149,54 @@ def load_corpora():
     return programs
 
 
-def run_stage(prog, backend, kind, timeout):
+class Workers:
+    """Private Arend projects for parallel runs, handed out one per worker thread.
+
+    A java `gen` writes into the Arend project and clears its `bin/`, so
+    concurrent gens need a project each (see lib.sh's AREND_PROJECT). A copy is
+    ~450 KB: the top-level sources, `arend.yaml` and `runtime/`, with an EMPTY
+    `src/Imported/` -- the 19 MB of already-imported modules is deliberately not
+    copied, because `gen` imports the program it is about to compile anyway.
+
+    With --jobs 1 this hands out `None`, i.e. no override and no copies made, so
+    the serial path is byte-for-byte the old behaviour.
+    """
+
+    def __init__(self, jobs):
+        self.jobs = jobs
+        self.tmp = None
+        self.free = []
+        self.lock = threading.Lock()
+        if jobs > 1:
+            self.tmp = tempfile.mkdtemp(prefix="lambox-workers-")
+            self.free = [self._make(i) for i in range(jobs)]
+
+    def _make(self, index):
+        dst = Path(self.tmp) / f"w{index}"
+        (dst / "src/Imported").mkdir(parents=True)
+        shutil.copy(AREND_PROJECT / "arend.yaml", dst / "arend.yaml")
+        for src in (AREND_PROJECT / "src").glob("*.ard"):
+            shutil.copy(src, dst / "src" / src.name)
+        shutil.copytree(AREND_PROJECT / "runtime", dst / "runtime")
+        return str(dst)
+
+    def acquire(self):
+        if self.jobs <= 1:
+            return None
+        with self.lock:
+            return self.free.pop()
+
+    def release(self, project):
+        if project is not None:
+            with self.lock:
+                self.free.append(project)
+
+    def cleanup(self):
+        if self.tmp:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+def run_stage(prog, backend, kind, timeout, project=None):
     """Run one (backend, kind) stage. Returns (exit status, seconds, diagnostic
     tail).
 
@@ -150,8 +206,11 @@ def run_stage(prog, backend, kind, timeout):
     killing only the script would leave it running, competing for the single
     core every later timing is measured on."""
     cmd = [str(STAGES_DIR / BACKEND_SCRIPT[backend]), kind] + prog.stage_args(kind, backend)
+    env = dict(os.environ)
+    if project is not None:
+        env["AREND_PROJECT"] = project
     start = time.monotonic()
-    proc = subprocess.Popen(cmd, cwd=TEST_DIR, text=True, start_new_session=True,
+    proc = subprocess.Popen(cmd, cwd=TEST_DIR, text=True, start_new_session=True, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         out, err = proc.communicate(timeout=timeout)
@@ -166,7 +225,7 @@ def run_stage(prog, backend, kind, timeout):
     return status, time.monotonic() - start, err
 
 
-def run_backend(prog, backend, args):
+def run_backend(prog, backend, args, project=None):
     """The three stages of one backend, stopping at the first that fails.
 
     Returns (status, {stage kind: seconds}, value, diagnostic tail)."""
@@ -177,7 +236,7 @@ def run_backend(prog, backend, args):
         # that is how a crashed run once got recorded as a 696 ms success.
         stale.unlink()
     for kind in KINDS:
-        status, took, err = run_stage(prog, backend, kind, args.timeout)
+        status, took, err = run_stage(prog, backend, kind, args.timeout, project)
         secs[kind] = took
         if status == "timeout":
             return "timeout", secs, "", err
@@ -192,7 +251,7 @@ def run_backend(prog, backend, args):
             # deterministic and are what --repeat is meant to stop paying for.
             times = [took]
             for _ in range(args.repeat - 1):
-                status, took, err = run_stage(prog, backend, kind, args.timeout)
+                status, took, err = run_stage(prog, backend, kind, args.timeout, project)
                 if status != 0:
                     return f"{kind}-fail", secs, "", err
                 times.append(took)
@@ -273,7 +332,7 @@ def table(rows):
     return ["  ".join(c.ljust(w) for c, w in zip(line, widths)).rstrip() for line in lines]
 
 
-def summary(rows, xfails):
+def summary(rows, xfails, timed=True):
     """Everything the run has to say: the table, then the recap. At the end
     rather than streamed -- the live per-program lines are progress (a java
     generation takes 30-60 s), this is the result."""
@@ -284,7 +343,8 @@ def summary(rows, xfails):
     failures = [r for r in rows if r["result"] not in ("ok", "xfail")
                 and not r["result"].startswith("skip")]
     unchecked = [r["program"] for r in rows if r["check"] == "none"]
-    print(f"\n{len(rows)} program(s), {len(failures)} failure(s) -> {RESULTS}")
+    print(f"\n{len(rows)} program(s), {len(failures)} failure(s)"
+          + (f" -> {RESULTS}" if timed else " (times contended; nothing recorded)"))
     for row in failures:
         print(f"  {row['program']}: {row['result']}"
               + (f" (out={row['output']} expected={row['expected']})"
@@ -317,6 +377,10 @@ def parse_args(argv):
     p.add_argument("--all", action="store_true", help="every program of every corpus")
     p.add_argument("--repeat", type=int, default=1, metavar="N",
                    help="run the RUN stage N times and keep the best (default: 1)")
+    p.add_argument("--jobs", "-j", type=int, default=1, metavar="N",
+                   help="run N programs concurrently (default: 1). Speeds up a "
+                        "correctness sweep; DISABLES recording, because "
+                        "contended times are not comparable")
     p.add_argument("--timeout", type=float, default=300.0, metavar="S",
                    help="per-stage timeout in seconds (default: %(default)s; java "
                         "generation takes 30-60 s on this corpus)")
@@ -327,6 +391,13 @@ def main(argv=None):
     args = parse_args(argv)
     if args.repeat < 1:
         die("--repeat must be at least 1")
+    if args.jobs < 1:
+        die("--jobs must be at least 1")
+    if args.jobs > 1 and args.repeat > 1:
+        # --repeat exists only to make a timing best-of; under contention that is
+        # a best-of noise. Refusing beats silently reporting a meaningless minimum.
+        die("--jobs > 1 cannot be combined with --repeat > 1: --repeat measures "
+            "time, and concurrent runs contend for the machine")
 
     programs = load_corpora()
     if not args.programs and not args.all:
@@ -345,33 +416,62 @@ def main(argv=None):
         selection = [known[n] for n in args.programs]
 
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    info(f"{stamp}: {len(selection)} program(s)")
-    rows, xfails = [], []
+    timed = args.jobs == 1
+    info(f"{stamp}: {len(selection)} program(s)"
+         + ("" if timed else f", {args.jobs} workers -- times contended, not recorded"))
+    xfails = []
+    workers = Workers(args.jobs)
 
-    for prog in selection:
-        statuses, values, times = {}, {}, {}
-        for backend in prog.backends:
-            status, secs, value, err = run_backend(prog, backend, args)
-            statuses[backend] = status
-            times[backend] = secs
-            if status in PRODUCED:
-                values[backend] = value
-            if status in FAILED and err.strip():
-                info(f"{prog.name}/{backend} {status}, last diagnostics:\n"
-                     + "\n".join(err.strip().splitlines()[-10:]))
+    def one(prog):
+        """Everything for one program. Independent of every other program: the
+        outputs go to work/<program>/<backend>, and a parallel run gives the
+        java stage its own Arend project."""
+        project = workers.acquire()
+        try:
+            statuses, values, times = {}, {}, {}
+            for backend in prog.backends:
+                status, secs, value, err = run_backend(prog, backend, args, project)
+                statuses[backend] = status
+                times[backend] = secs
+                if status in PRODUCED:
+                    values[backend] = value
+                if status in FAILED and err.strip():
+                    info(f"{prog.name}/{backend} {status}, last diagnostics:\n"
+                         + "\n".join(err.strip().splitlines()[-10:]))
+        finally:
+            workers.release(project)
         result = result_of(prog, statuses, values)
-        if result == "xfail":
-            xfails.append((prog.name, prog.xfail))
-        row = ([stamp, prog.name, check_of(prog, values), result]
-               + [seconds(times.get(b, {}).get(k)) for k in KINDS
-                  for b in BACKEND_SCRIPT]
-               + [next(iter(values.values()), ""), prog.expected])
-        append_row(row)
-        record = dict(zip(COLUMNS, row))
-        rows.append(record)
-        print("  ".join(f"{record[c]}" for c in ("program", "check", "result")), flush=True)
+        return prog, statuses, values, times, result
 
-    failures = summary(rows, xfails)
+    try:
+        if args.jobs == 1:
+            completed = (one(p) for p in selection)
+        else:
+            pool = ThreadPoolExecutor(max_workers=args.jobs)
+            completed = pool.map(one, selection)
+        rows = []
+        for prog, statuses, values, times, result in completed:
+            if result == "xfail":
+                xfails.append((prog.name, prog.xfail))
+            row = ([stamp, prog.name, check_of(prog, values), result]
+                   + [seconds(times.get(b, {}).get(k)) for k in KINDS
+                      for b in BACKEND_SCRIPT]
+                   + [next(iter(values.values()), ""), prog.expected])
+            # Only a serial run may write the record. Its timing columns are the
+            # point of that file (test/benchmarks.md quotes them), and a
+            # contended run's numbers are not comparable to anything -- measured
+            # on this machine, an unchanged binary took 15.0 s and 9.9 s an hour
+            # apart, and a 3x spread appeared inside one 5-repeat run. Appending
+            # them would corrupt the one artifact whose value is comparability.
+            if timed:
+                append_row(row)
+            record = dict(zip(COLUMNS, row))
+            rows.append(record)
+            print("  ".join(f"{record[c]}" for c in ("program", "check", "result")), flush=True)
+    finally:
+        workers.cleanup()
+
+    failures = summary(rows, xfails, timed)
     return 1 if failures else 0
 
 

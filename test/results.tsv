@@ -117,3 +117,7 @@ timestamp	program	check	result	java_gen	ocaml_gen	c_gen	java_build	ocaml_build	c
 2026-08-31T12:25:15Z	matmul250	expected	ok	24.0	0.0	0.0	1.2	0.2	0.5	20.0	12.6	8.1	15625000	15625000
 2026-08-31T12:25:15Z	lean-deriv	expected	ok	158.3	0.1	-	2.4	0.8	-	14.8	6.0	-	40230090	40230090
 2026-08-31T12:25:15Z	lean-const-fold	expected	ok	37.4	0.0	-	1.5	0.6	-	12.7	2.6	-	6895932	6895932
+2026-08-31T14:39:47Z	peano	expected	ok	20.1	-	-	1.3	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
+2026-08-31T14:39:47Z	peregrine-rocq-oddeven	expected	ok	24.8	-	-	1.2	-	-	0.1	-	-	0	0
+2026-08-31T14:39:47Z	peregrine-rocq-nat	expected	ok	25.9	-	-	1.2	-	-	0.1	-	-	1(1(1(0)))	1(1(1(0)))
+2026-08-31T14:39:47Z	peregrine-rocq-mutual	expected	ok	25.8	-	-	1.3	-	-	0.1	-	-	1(0)	1(0)
