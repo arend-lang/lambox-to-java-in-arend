@@ -15,8 +15,10 @@
 --
 -- SCOPE. Deliberately exactly what `compileExpr`/`compileDecl` emit, no
 -- more: no arithmetic operators, no loops, no conditionals, no visibility
--- modifiers besides `public static`, no generics, no interfaces or class
--- declarations other than the single generated program class. Generated code is
+-- modifiers besides `public static`, no generics, no interfaces. Classes come in
+-- exactly three shapes: the single generated program class, the anonymous
+-- one-method classes that are our closures (`jAnonFn`), and the local classes
+-- that tie a `fix` knot (`jLocalClass`). Generated code is
 -- untyped-style: every value has static type `Object` and is cast where needed,
 -- so this fragment is NOT Featherweight Java and is not meant to be.
 -- The fixed runtime (`Rt.Fn`, `Rt.Data`, `Rt.BOX`, `Rt.PRIM_*`) is hand-written
@@ -140,6 +142,15 @@
   -- This node is temporary by design: closure conversion (step 5) replaces it
   -- with named `Closure_<path>` classes.
   | jAnonFn JType JIdent (Array JStmt)
+  -- `C.this` -- the enclosing instance of the local class named `C`, as seen
+  -- from inside a nested anonymous class. Needed by the local-class encoding of
+  -- `fix` (`ToJava.ard`): a sibling of a mutually recursive block is referenced
+  -- from within a `jAnonFn` whose own `this` is the closure, so the forwarding
+  -- call has to name the instance it means.
+  -- NOT `jStatic "C.this"`, even though that would print identically: `jStatic`
+  -- means a globally resolved name, and this one is resolved in the lexical
+  -- scope of the enclosing class. The distinction is the point of this AST.
+  | jQualThis JQIdent
   -- A `String` literal; the printer is responsible for quoting and escaping.
   | jStringLit String
   -- A decimal `int` literal: constructor tags, field indices, array indices,
@@ -169,6 +180,16 @@
   -- `LambdaBox.ard`'s `case` branches); Malfunction's
   -- `Mswitch of t * (case list * t) list` makes the same choice.
   | jSwitch JExpr (Array (\Sigma Nat (Array JStmt))) (Array JStmt)
+  -- `class <C> { public Object <m>(Object <p>){ <body> } ... }` -- a LOCAL class
+  -- (declared inside a block, capturing the enclosing effectively-final locals),
+  -- holding k methods that may call each other. This is the second encoding of
+  -- λ□ `fix`: the recursive knot is tied by the class declaration itself, so
+  -- there are no mutable cells and no initialization order to reason about.
+  -- Like `jAnonFn`, a method is spelled out as (name, parameter, body) rather
+  -- than held as a `JMethod`: every one of them is `public Object m(Object)`,
+  -- and a record field would put `JMethod` into the JExpr/JStmt `\data` cycle,
+  -- which Arend rejects.
+  | jLocalClass JIdent (Array (\Sigma JIdent JIdent (Array JStmt)))
   -- `throw e;`
   | jThrow JExpr
   -- `return e;`

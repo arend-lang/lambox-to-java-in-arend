@@ -37,9 +37,11 @@
 -- branched per child, so names are unique without left-to-right state
 -- threading (which would force a sequential helper).
 --
--- Design (unchanged): untyped -> Java `Object`; closures = anonymous inner
--- classes (no invokedynamic); constructors -> `Data{int tag; Object[] fields}`;
--- constants -> zero-arg static methods; fix -> mutable `Fn[]` knot-tying.
+-- Design: untyped -> Java `Object`; closures = anonymous inner classes (no
+-- invokedynamic); constructors -> `Data{int tag; Object[] fields}`; constants ->
+-- zero-arg static methods; fix -> a local class with one method per mutually
+-- defined function (`FixStyle`, which also keeps the original mutable-`Fn[]`
+-- encoding for comparison).
 --
 -- The fixed part of that encoding (`Fn`, `Data` + its `toString`, `BOX`) is NOT
 -- generated: it lives in the hand-written `runtime/Rt.java` shipped alongside
@@ -90,10 +92,36 @@
 --
 -- Everything below is parameterized by this choice; there is no default hidden
 -- inside the generator (see `compileProgramWith` / `compileProgram`).
+
+-- How λ□ `fix` is encoded in Java. Both encodings are kept because they are the
+-- object of a comparison -- of the Java semantics a correctness proof would have
+-- to talk about, and of the runtime cost (test/benchmarks.md):
+--
+--   * `fixLocalClass` (the DEFAULT) -- a local class with one method per
+--     mutually defined function. The knot is tied STATICALLY, by the class
+--     declaration: no mutable cells, no assignment, and nothing whose value
+--     depends on when it is read. A sibling used as a VALUE is a one-line
+--     forwarding closure created at the point of use.
+--   * `fixKnotArray` -- the original: `final Rt.Fn[] x = new Rt.Fn[k];` then
+--     `x[j] = ...` for each j, with the environment reading `x[j]` back.
+--     Correctness rests on an invariant nothing checks: `x[j]` must not be
+--     DEREFERENCED before all k assignments have run. It holds for the λ□ terms
+--     we see, because a fix body is a guarded lambda, so the read happens when
+--     the closure is applied -- but an unguarded body reads `null` silently.
+--     That unwritten side condition is exactly what the local-class encoding
+--     removes, and why it exists.
+--
+-- Both are total: neither rejects a program the other accepts.
+\data FixStyle
+  | fixLocalClass
+  | fixKnotArray
+
 \class JavaTarget
   -- Name of the runtime class (see runtime/Rt.java); `rt` below is the qualifier
   -- used in every emitted reference, so retargeting the runtime is one field.
   | runtimeClass : String
+  -- Which of the two `fix` encodings to emit; see `FixStyle`.
+  | fixStyle : FixStyle
   -- A `prim (primInt, i)` literal in this target's representation.
   | intLit : Int -> JExpr
   -- Suffix of the runtime's primitive-op constants (`Rt.PRIM_ADD_INT` vs
@@ -112,13 +140,25 @@
 
 \func targetLong : JavaTarget \cowith
   | runtimeClass => "Rt"
+  | fixStyle => fixLocalClass
   | intLit i => jCallStatic "Long.valueOf" (jLongLit i :: nil)
   | primOpSuffix => "LONG"
 
 \func targetBigInteger : JavaTarget \cowith
   | runtimeClass => "Rt"
+  | fixStyle => fixLocalClass
   | intLit i => jNew (tClass "java.math.BigInteger") (jStringLit (intToStr i) :: nil)
   | primOpSuffix => "INT"
+
+-- `targetLong` with the original `fix` encoding, so the two can be compiled from
+-- the same program and compared -- for output (they must agree on every program
+-- of the corpus) and for run time (test/benchmarks.md). Not the default; nothing
+-- in the pipeline reaches for it except a deliberate A/B.
+\func targetLongKnotArray : JavaTarget \cowith
+  | runtimeClass => "Rt"
+  | fixStyle => fixKnotArray
+  | intLit i => jCallStatic "Long.valueOf" (jLongLit i :: nil)
+  | primOpSuffix => "LONG"
 
 -- Realization of λ□ axioms (constants without a body) in the Java runtime.
 -- Peregrine does this per run via `--attributes` (see ExampleMatMul.ard's
@@ -250,6 +290,44 @@
   | 0 => env
   | suc k => pushFix arr (suc j) k (jIndex (jVar arr) (jIntLit j) :: env)
 
+-- ---------------------------------------------------------------------------
+-- The local-class `fix` encoding (`fixLocalClass`); see `FixStyle`.
+-- ---------------------------------------------------------------------------
+
+-- The local class of the fix at `path`, and its j-th method. Both are derived
+-- from the path, so they are unique without a counter, like every other
+-- generated name here. `Fix` is capitalized because it names a class.
+\func fixClassName (path : String) : String => "Fix" ++ path
+
+\func fixMethodName (j : Nat) : String => "f" ++ natToStr j
+
+-- The j-th mutually defined function AS A VALUE: a closure forwarding to the
+-- method. λ□ lets a sibling be passed around, not only called, so the
+-- environment has to hold an `Rt.Fn` -- and the method itself is not one.
+--
+-- Created at the POINT OF USE (one `new` per occurrence), deliberately:
+--   * a wrapper cached in a field assigned by the constructor would put the
+--     initialization order this encoding exists to remove straight back in;
+--   * a wrapper bound to a local at the top of each method would allocate k of
+--     them on every call, including the calls that never mention a sibling;
+--   * per use, the overwhelmingly common occurrence -- a self-recursive call --
+--     is `new`-then-`apply` with the closure not escaping, which is the shape
+--     escape analysis is expected to remove entirely.
+-- `recv` is the receiver to forward to: `FixP.this` from inside the class
+-- (where `this` is the wrapper closure, not the fix), the instance local from
+-- outside it.
+\func fixMethodRef {t : JavaTarget} (recv : JExpr) (path : String) (j : Nat) : JExpr =>
+  \let wp => "w" ++ natToStr j ++ path
+  \in jAnonFn rtFn wp (jReturn (jInvoke recv (fixMethodName j) (jVar wp :: nil)) :: nil)
+
+-- Push the k siblings onto env as forwarding closures; head = f(k-1) = de
+-- Bruijn 0, the same order `pushFix` establishes for the array encoding
+-- (λ□'s fix_subst). No compileExpr.
+\func pushFixMethods {t : JavaTarget} (recv : JExpr) (path : String) (j k : Nat) (env : Array JExpr)
+  : Array JExpr \elim k
+  | 0 => env
+  | suc k => pushFixMethods recv path (suc j) k (fixMethodRef recv path j :: env)
+
 -- Core compiler. `path` uniquely identifies this node; binder names and child
 -- paths are derived from it, so no state threading is needed.
 \func compileExpr {tgt : JavaTarget} (env : Array JExpr) (path : String) (t : LBTerm) : Out \elim t
@@ -321,19 +399,74 @@
          jIndex (jField (jCast rtData os.2) "fields")
                 (jIntLit (pinfo.projParamCount Nat.+ pinfo.projFieldIdx)))
 
-  -- fix: mutable Fn[] + knot-tying; map inline over `defs j`, projecting the
-  -- body directly (`(defs j).defBody`), same reasoning as `case` above.
+  -- fix: two encodings, picked by the target's `fixStyle` (see `FixStyle` for
+  -- what is being compared). Both map inline over `defs j`, projecting the body
+  -- directly (`(defs j).defBody`), same reasoning as `case` above -- which is
+  -- also what keeps the mutual recursion with `compileFixMethod` below within
+  -- the termination checker's reach.
   | fix defs idx =>
-    \let | arr => "x" ++ path
-         | k   => defs.len
-         | env' => pushFix arr 0 k env
-         | assigns => mkArray {Array JStmt} {k} (\lam j =>
-             \let | ob => compileExpr env' ("y" ++ natToStr j ++ path) (defs j).defBody
-             \in appendStmts ob.1 (jAssign (jIndex (jVar arr) (jIntLit j)) (jCast rtFn ob.2) :: nil)
-         )
-    \in (jLocal true (tArray rtFn) arr (just (jNewArraySized rtFn (jIntLit k))) ::
-           concatStmtBlocks assigns,
-         jIndex (jVar arr) (jIntLit idx))
+    \let | k => defs.len
+    \in \case fixStyle \with {
+      -- Local class: one method per mutually defined function, the knot tied by
+      -- the class declaration. `Fix<path>.this` is how a method reaches its
+      -- siblings, since the forwarding closure's own `this` is the closure.
+      | fixLocalClass =>
+        \let | cls  => fixClassName path
+             | inst => "z" ++ path
+             | env' => pushFixMethods (jQualThis cls) path 0 k env
+             | methods => mkArray {\Sigma JIdent JIdent (Array JStmt)} {k} (\lam j =>
+                 \let | m => compileFixMethod env' ("y" ++ natToStr j ++ path) (defs j).defBody
+                 \in (fixMethodName j, m.1, m.2))
+        \in (jLocalClass cls methods ::
+             jLocal true (tClass cls) inst (just (jNew (tClass cls) nil)) ::
+             nil,
+             fixMethodRef (jVar inst) path idx)
+      -- Mutable `Fn[]` + knot-tying, the original encoding.
+      | fixKnotArray =>
+        \let | arr => "x" ++ path
+             | env' => pushFix arr 0 k env
+             | assigns => mkArray {Array JStmt} {k} (\lam j =>
+                 \let | ob => compileExpr env' ("y" ++ natToStr j ++ path) (defs j).defBody
+                 \in appendStmts ob.1 (jAssign (jIndex (jVar arr) (jIntLit j)) (jCast rtFn ob.2) :: nil)
+             )
+        \in (jLocal true (tArray rtFn) arr (just (jNewArraySized rtFn (jIntLit k))) ::
+               concatStmtBlocks assigns,
+             jIndex (jVar arr) (jIntLit idx))
+    }
+
+-- One method of a `fixLocalClass` local class: (parameter name, body).
+--
+-- Mutually recursive with `compileExpr`, and it \elim's the fix def's body in
+-- order to STRIP THE GUARDING LAMBDA -- an inner `\case` would not do, because
+-- the termination checker loses the structural link through a `\case`-bound
+-- variable (the same reason `case`/`fix` above recurse on direct projections).
+-- Going through a separate `\elim` keeps the link: `compileExpr` calls this on
+-- `(defs j).defBody < fix defs idx`, and this calls `compileExpr` on the
+-- lambda's body, so the cycle decreases.
+--
+-- Stripping the lambda is the whole point: the guarded body becomes the METHOD's
+-- body, so a self-recursive call is a call, not a closure allocation followed by
+-- an interface dispatch.
+--
+-- The second clause is the general case, and it is why this encoding needs no
+-- well-formedness side condition. An UNGUARDED body (`fix [f => f] 0`, or
+-- anything else that is not syntactically a lambda) is eta-expanded: the method
+-- evaluates the body and applies the result. Such a λ□ term diverges, and so
+-- does this Java -- loudly, with a StackOverflowError, where the array encoding
+-- silently dereferences a `null` slot. Erasure output is a lambda in practice,
+-- so the clause is expected to be dead code; it emits a comment saying so, and
+-- `grep` over generated programs is how that is confirmed.
+\func compileFixMethod {tgt : JavaTarget} (env : Array JExpr) (path : String) (t : LBTerm)
+  : \Sigma JIdent (Array JStmt) \elim t
+  | lambda _ inner =>
+    \let | pv => "p" ++ path
+         | ob => compileExpr (jVar pv :: env) ("L" ++ path) inner
+    \in (pv, appendStmts ob.1 (jReturn ob.2 :: nil))
+  | t =>
+    \let | pv => "p" ++ path
+         | ot => compileExpr env path t
+    \in (pv, jComment "unguarded fix body: eta-expanded (diverges instead of reading an unassigned slot)" ::
+             appendStmts ot.1 (jReturn (jInvoke (jCast rtFn ot.2) "apply" (jVar pv :: nil)) :: nil))
 
 
 -- ---------------------------------------------------------------------------

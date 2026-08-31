@@ -22,7 +22,9 @@ rather than one sample:
 | `lean-const-fold` | 9.8 s | building and folding a 2^20-node expression tree, twice | java ocaml |
 | `lean-binarytrees` | 1.8 s | constructor allocation and GC, n=12 | java ocaml |
 
-(best-of-5, from the baseline below.)
+(best-of-5, from the baseline below, i.e. the `fixKnotArray` encoding; they say
+what SIZE of measurement each program gives, not what the current encoding
+costs.)
 
 Why these five and not others:
 
@@ -134,7 +136,10 @@ Deliberately NOT candidates:
 
 ## Baseline, 2026-08-31
 
-Taken before the planned ToJava change, on an otherwise idle tree.
+Taken before the ToJava `fix` change, on an otherwise idle tree. These rows are
+therefore the `fixKnotArray` encoding, and they are a REFERENCE POINT ONLY: as a
+comparison partner they are superseded by the same-session crossover further
+down, because comparing across sessions on this machine measures the machine.
 
     commit    074cfd1 (test: consolidate the test harness into one run.py driver)
               plus the working-tree change that ADDED matmul250
@@ -162,11 +167,82 @@ Numbers, for reading at a glance (seconds; run columns are best-of-5):
     lean-deriv           182.0         3.0      13.1        5.1      -  40230090
     lean-const-fold       31.7         1.2       9.8        2.1      -  6895932
 
-Note the shape of `matmul` vs `matmul250`: gen (29.7 vs 29.9 s) and build (1.3
-vs 1.4 s) agree while the run time differs 13x. That is the property the pair
-was built for -- ToJava does the same work on both, so the run gap is purely the
-generated code executing -- and it held on both runs it was measured on.
+Note the shape of `matmul` vs `matmul250`: the run times differ 13x while gen and
+build carry no size dependence at all -- they are the same order of magnitude and
+which of the two is larger varies from run to run (gen came in at 29.7 vs 29.9 s
+here, 18.0 vs 20.8 s later the same day, 26.7 vs 20.4 s later still). That is the
+property the pair was built for: ToJava does the same work on both, so the run
+gap is purely the generated code executing. Quote the run gap as the evidence,
+not the gen equality -- gen is noise-dominated on this machine.
 
 Other rows in `results.tsv` from the same day are NOT the baseline: the
 superseded five-program run at `2026-08-31T09:44:21Z` (with `matmul300`), the
 single-sample sizing probes, and the nine-program candidate survey.
+
+## How to compare two encodings: A/B in one session, crossover
+
+The baseline above is a REFERENCE POINT, not a comparison partner. This machine
+drifts far too much between runs to compare across them: the same unchanged
+OCaml binary for `matmul250` measured 15.0 s at 10:36 and 9.9 s at 11:52, and
+`lean-deriv`'s OCaml run moved 4.8 -> 6.1 s between two java runs eleven minutes
+apart. A number from an hour ago is not evidence about a code change.
+
+So to compare encoding A against encoding B:
+
+1. Run the benchmark command with A.
+2. Change the ONE line that picks the encoding (`compileProgram` in
+   `lambox-to-java/src/ToJava.ard`, `targetLong` vs `targetLongKnotArray`).
+3. Run the same command again, immediately.
+4. Do it a second time in the OPPOSITE order (B then A). Drift is monotone over
+   a session, so averaging the two orders cancels it; agreeing in SIGN across
+   both orders is what makes a few-percent difference believable at all.
+5. Read `ocaml_run`/`c_run` as the control on every pair. A ToJava change cannot
+   touch them, so if they moved as much as `java_run` did, the run pair is
+   telling you about the machine.
+
+A single pair, in one direction, cannot resolve anything below ~20%.
+
+## Result: `fixLocalClass` vs `fixKnotArray` (2026-08-31)
+
+The two `fix` encodings of `ToJava.ard`'s `FixStyle`, measured by the protocol
+above. Every run was `check=expected`, `result=ok` -- the two encodings agree on
+every value, which is the first thing being tested.
+
+    order 1 (local class 11:52, knot array 12:03)
+    program           local  knot   java   ocaml control
+    matmul250          16.0  15.4   +3.9%  9.9 vs 9.7  (+2%)
+    lean-deriv         12.3  14.1  -12.8%  4.8 vs 6.1 (-21%)   <- control moved MORE
+    lean-const-fold    10.6  11.4   -7.0%  2.1 vs 2.6 (-19%)   <- control moved MORE
+    matmul              1.3   1.2   +8.3%  0.8 vs 0.7
+    lean-binarytrees    1.2   1.4  -14.3%  0.1 vs 0.1
+
+    order 2 (knot array 12:14, local class 12:25) -- controls identical, so this
+    is the clean pair
+    program           knot   local  java    ocaml control
+    matmul250          19.7  20.0   +1.5%   12.5 vs 12.6 (+0.8%)
+    lean-deriv         14.1  14.8   +5.0%   6.0 vs 6.0 (0%)
+    lean-const-fold    12.2  12.7   +4.1%   2.6 vs 2.6 (0%)
+
+Reading it: in order 1 the machine sped up by more than the java columns did, so
+the local class' apparent 7-13% *win* on deriv and const-fold is drift, and
+correcting for the control turns it into a loss. Order 2 has flat controls and is
+the number to quote: **the local-class encoding is 1-5% slower** -- ~1.5% on
+`matmul250`, ~4-5% on `lean-deriv` and `lean-const-fold`. Both orders agree in
+sign once the control is taken into account, on all three programs.
+
+`matmul` and `lean-binarytrees` (1.2-1.4 s) disagreed in sign between orders and
+resolve nothing, as expected at that size.
+
+So: no significant regression, a consistent small one. Where it comes from is not
+mysterious -- a sibling used as a value allocates a forwarding closure at the
+point of use, where the array encoding reads `x[j]`. The next step if that 1-5%
+ever matters: give the environment a "this is a known method" entry so an
+application of a fix slot compiles to a direct method call and allocates nothing.
+That is a change to `compileExpr`'s `app` clause and the env type, not to this
+encoding, and it is only worth doing with these numbers in hand.
+
+Correctness, same change: `run.py --all` -- 55 programs, 0 failures, the one
+xfail (`example`) unchanged and unrelated. 46 of the 71 generated programs
+contain a local `Fix` class (178 of them, with 294 sibling references), and the
+eta-expansion branch for an unguarded fix body appeared in NONE of them, which is
+what makes it dead code in practice rather than in theory.

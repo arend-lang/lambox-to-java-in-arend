@@ -78,6 +78,7 @@
     "new " ++ printType iface ++ "(){ public Object apply(Object " ++ p ++ "){\n"
       ++ concatStr (mkArray {String} {body.len} (\lam i => printStmt (suc ind) (body i)))
       ++ indentStr ind ++ "} }"
+  | jQualThis c => c ++ ".this"
   | jStringLit s => "\"" ++ s ++ "\""
   | jIntLit n => natToStr n
   | jLongLit i => intToStr i ++ "L"
@@ -109,6 +110,15 @@
           ++ concatStr (mkArray {String} {dflt.len} (\lam j => printStmt ind2 (dflt j)))
           ++ indentStr ind1 ++ "}\n"
           ++ indentStr ind ++ "}\n"
+  -- Same projection-chain shape as `jSwitch` above: `((ms i).3 j)`.
+  | jLocalClass c ms =>
+    \let | ind1 => suc ind
+         | ind2 => suc ind1
+         | methods => mkArray {String} {ms.len} (\lam i =>
+             indentStr ind1 ++ "public Object " ++ (ms i).1 ++ "(Object " ++ (ms i).2 ++ "){\n"
+               ++ concatStr (mkArray {String} {((ms i).3).len} (\lam j => printStmt ind2 ((ms i).3 j)))
+               ++ indentStr ind1 ++ "}\n")
+    \in indentStr ind ++ "class " ++ c ++ " {\n" ++ concatStr methods ++ indentStr ind ++ "}\n"
   | jThrow e => indentStr ind ++ "throw " ++ printExpr ind e ++ ";\n"
   | jReturn e => indentStr ind ++ "return " ++ printExpr ind e ++ ";\n"
   | jExprStmt e => indentStr ind ++ printExpr ind e ++ ";\n"
