@@ -1,0 +1,177 @@
+\import Data.Bool
+\import Data.Maybe
+\import Data.String
+\import JavaAst
+\import Set
+\import StringUtil
+
+-- =============================================================================
+-- What lambda-box needs from the HAND-WRITTEN runtime.
+--
+-- `runtime/Rt.java` has two halves, and JavaAst.ard already owns one of them:
+-- the ABI core (`Fn`, `Data`, `BOX`) has dedicated AST nodes, because a
+-- correctness statement quantifies over application and constructors. This file
+-- owns the OTHER half -- the periphery, referenced by qualified name because it
+-- is opaque to a λ□ semantics:
+--
+--   * REALIZATIONS of λ□ constants that have no body. `javaAxioms` maps a
+--     mangled kername to the runtime constant implementing it; anything absent
+--     compiles to a throwing stub. (Peregrine does the same job per run via
+--     `--attributes`; we can use a fixed table because the runtime is ours.)
+--   * The REPRESENTATION of λ□ primitive ints -- `intLit` for literals and
+--     `primOpSuffix` for the matching operation family. These two MUST AGREE:
+--     `Long.valueOf(..)` literals with `Rt.PRIM_*_INT` operations would put
+--     `BigInteger` arithmetic on `Long` values and fail at runtime with a
+--     ClassCastException. Keeping them side by side is the point of putting them
+--     in one file.
+--   * The reporters for ILL-FORMED INPUT (`unbound`, `freeVar`) -- two λ□ nodes
+--     that have no Java value at all.
+--
+-- WHY A FILE OF ITS OWN. This was 117 of ToJava.ard's 512 lines, and none of it
+-- is compilation: it is a lookup table plus three names. `ToJava.ard` is the
+-- translation from λ□ structure to Java structure, and it is what a proof will
+-- be about; the table is data that the proof will take as a HYPOTHESIS (each
+-- axiom's realization is assumed to implement its axiom -- nothing here can be
+-- derived, since `Rt.java` is hand-written). Different kind of thing, different
+-- file.
+--
+-- Consequence worth preserving: after this split `ToJava.ard` does not spell a
+-- single runtime name. Every runtime reference in generated code comes either
+-- from JavaAst's ABI nodes or from a function here.
+-- =============================================================================
+
+-- Representation of λ□ primitive ints in the generated Java: `java.lang.Long`,
+-- Java's built-in 64-bit integer.
+--
+-- KNOWN MISMATCH (documented, not fixed). A λ□ `prim (primInt, _)` is a 63-bit
+-- machine integer with cyclic (mod 2^63) arithmetic -- MetaRocq's
+-- erasure/theories/EPrimitive.v has `primIntModel (i : PrimInt63.int)`,
+-- lean-to-lambdabox has `PrimModel .primInt := BitVec 63`, and the Rocq refman
+-- ("Primitive objects / Primitive integers") specifies the width plus the
+-- unsigned/signed views `Uint63`/`Sint63`. No Java type matches that, and our
+-- own AST does not either (LambdaBox.ard's `PrimModel primInt => Int` is
+-- unbounded). `Long` is an APPROXIMATION, and the closest one available: a
+-- fixed-width integer with wraparound, so only the width is wrong (2^64 instead
+-- of 2^63) and the sign convention differs, whereas `PrimInt63` reduction is
+-- unsigned/cyclic.
+--
+-- It agrees with the C backend (CertiRocq's prim_int63_*) and the OCaml one
+-- (unboxed OCaml `int`, cf. ExtrOCamlInt63) only while values stay well below
+-- 2^62, which holds for the current examples.
+--
+-- `java.math.BigInteger` used to be selectable here and was REMOVED, not lost:
+-- unbounded arithmetic matches our AST's `Int` but neither the source's int63
+-- nor the other two backends, so it was further from the source semantics than
+-- `Long` rather than more conservative -- and nothing in the pipeline selected
+-- it.
+-- FUTURE WORK: an int63 representation whose literals and `Rt.PRIM_*` ops
+-- normalize mod 2^63 (following `Uint63`) -- the only one that could be proved
+-- to agree with λ□'s evaluation relation once that relation exists. That is a
+-- new REPRESENTATION, so it belongs here as a parameter when written, together
+-- with the matching `primOpSuffix`; see LambdaBox.ard's `PrimModel` and
+-- notes/RESEARCH_AND_PLAN.md.
+\func intLit (i : Int) : JExpr => jCallStatic "Long.valueOf" (jLongLit i :: nil)
+
+-- Suffix of the runtime's primitive-op constants (`Rt.PRIM_ADD_LONG`). Kept as
+-- a name of its own rather than spelled into the axiom table below, because
+-- `Rt.java` still ships a second family (`_INT`, on BigInteger) and an int63
+-- family would be a third: this is the one place that says which one generated
+-- code reaches for.
+\func primOpSuffix : String => "LONG"
+
+-- `Rt`, as the receiver of a static member. `runtimeClassName` comes from
+-- JavaAst.ard, which is where the runtime's name is decided (once).
+\func rtRef : JExpr => jStatic runtimeClassName
+
+-- Realization of λ□ axioms (constants without a body) in the Java runtime.
+-- Peregrine does this per run via `--attributes` (see ExampleMatMul.ard's
+-- matMulAttrsC/OCaml, remapping onto CertiRocq's prim_int63_*); the Java
+-- backend instead has this fixed table of axiom name -> runtime expression,
+-- since the runtime it targets (`runtime/Rt.java`) is ours. An axiom listed
+-- here compiles to the runtime constant, everything else to a throwing stub.
+-- Keys are fully mangled kernames: the Lean frontend places machine-Nat
+-- primitives under `Nat`, while the hand-written examples use root names.
+-- Keeping the module path avoids treating an unrelated `Foo.add` as Nat.add.
+\func javaAxioms : Array (\Sigma String JExpr) =>
+  \let | op (nm : String) => jField rtRef ("PRIM_" ++ nm ++ "_" ++ primOpSuffix)
+       -- An operation that neither takes nor returns a λ□ primitive int is the
+       -- same in both representations, so it has ONE runtime constant.
+       | fixed (nm : String) => jField rtRef nm
+  \in ("c___prim_add_int", op "ADD") ::
+      ("c___prim_mul_int", op "MUL") ::
+      ("c___prim_sub_int", op "SUB") ::
+      ("c___prim_eqb_int", op "EQB") ::
+      ("c__Nat__add", op "ADD") ::
+      ("c__Nat__mul", op "MUL") ::
+      -- NOT `op "SUB"`: Lean's Nat subtraction truncates at zero, while
+      -- `prim_sub_int` is Peregrine's wrapping int63 subtraction.
+      ("c__Nat__sub", jField rtRef ("NAT_SUB_" ++ primOpSuffix)) ::
+      ("c__Nat__beq", op "EQB") ::
+      -- The rest of the machine-Nat operations lean-to-lambdabox leaves as
+      -- axioms. `div`/`mod` follow Lean's total conventions and
+      -- `decEq`/`decLe`/`decLt` return `Decidable`, not `Bool` (see Rt.java).
+      ("c__Nat__div", op "DIV") ::
+      ("c__Nat__mod", op "MOD") ::
+      ("c__Nat__pow", op "POW") ::
+      ("c__Nat__ble", op "BLE") ::
+      ("c__Nat__blt", op "BLT") ::
+      ("c__Nat__decEq", op "DEC_EQ") ::
+      ("c__Nat__decLe", op "DEC_LE") ::
+      ("c__Nat__decLt", op "DEC_LT") ::
+      -- Lean's machine-`Int` operations. `Int` erases to the same λ□ primitive
+      -- int as `Nat`, so `ofNat` is the identity in both representations.
+      ("c__Int__ofNat", fixed "INT_OF_NAT") ::
+      ("c__Int__negSucc", jField rtRef ("INT_NEG_SUCC_" ++ primOpSuffix)) ::
+      ("c__Int__neg", jField rtRef ("INT_NEG_" ++ primOpSuffix)) ::
+      ("c__Int__add", jField rtRef ("INT_ADD_" ++ primOpSuffix)) ::
+      ("c__Int__mul", jField rtRef ("INT_MUL_" ++ primOpSuffix)) ::
+      ("c__Int__ediv", jField rtRef ("INT_EDIV_" ++ primOpSuffix)) ::
+      ("c__Int__emod", jField rtRef ("INT_EMOD_" ++ primOpSuffix)) ::
+      ("c__Int__decEq", jField rtRef ("INT_DEC_EQ_" ++ primOpSuffix)) ::
+      -- Lean's `Array` operations (`@[extern]`, so erasure keeps no body). Only
+      -- `size` returns a Nat, hence only it depends on the representation. The
+      -- Lean frontend writes `!` in a name as `_u33`.
+      ("c__Array__mk", fixed "ARRAY_MK") ::
+      ("c__Array__emptyWithCapacity", fixed "ARRAY_EMPTY_WITH_CAPACITY") ::
+      ("c__Array__push", fixed "ARRAY_PUSH") ::
+      ("c__Array__getInternal", fixed "ARRAY_GET_INTERNAL") ::
+      ("c__Array__get_u33Internal", fixed "ARRAY_GET_BANG_INTERNAL") ::
+      ("c__Array__set_u33", fixed "ARRAY_SET_BANG") ::
+      ("c__Array__swap", fixed "ARRAY_SWAP") ::
+      ("c__Array__size", jField rtRef ("ARRAY_SIZE_" ++ primOpSuffix)) ::
+      -- Rewriting along an equality is the identity at runtime.
+      ("c__Eq__rec", fixed "EQ_REC") ::
+      ("c__Eq__ndrec", fixed "EQ_REC") ::
+      nil
+
+-- Lookup by fully mangled kername, including its module path.
+\func lookupAxiom (name : String) (tbl : Array (\Sigma String JExpr)) : Maybe JExpr \elim tbl
+  | nil => nothing
+  | e :: tbl => \case e.1 == name \with {
+    | true => just e.2
+    | false => lookupAxiom name tbl
+  }
+
+
+-- The realization of one λ□ axiom, by mangled kername: the entry point callers
+-- use, so that the table itself stays an implementation detail of this file.
+\func axiomImpl (name : String) : Maybe JExpr => lookupAxiom name javaAxioms
+
+-- ---------------------------------------------------------------------------
+-- Ill-formed input
+--
+-- Two λ□ nodes have no Java value: a `bvar` whose de Bruijn index exceeds the
+-- enclosing binders, and an `fvar` (a locally-nameless free variable). A closed
+-- program produced by erasure contains neither, so these are unreachable for
+-- well-formed input -- which is exactly why they must not be a silent `null`:
+-- the generator used to emit one, and it either blew up far away as a
+-- NullPointerException or propagated as a value. Each of these compiles to a
+-- call that fails immediately and names the offending node (`path` is the
+-- generator's structural node id).
+-- ---------------------------------------------------------------------------
+
+\func rtUnbound (index : Nat) (path : String) : JExpr =>
+  jCallStatic (runtimeQual ++ "unbound") (jIntLit index :: jStringLit path :: nil)
+
+\func rtFreeVar (name path : String) : JExpr =>
+  jCallStatic (runtimeQual ++ "freeVar") (jStringLit name :: jStringLit path :: nil)

@@ -7,8 +7,8 @@
 \import Data.Maybe
 \import Data.String
 \import JavaAst
+\import JavaAxioms
 \import JavaPrint
-\import Set
 \import StringUtil
 
 -- =============================================================================
@@ -46,7 +46,8 @@
 -- The runtime (`Fn`, `Data`, `BOX`, `Rt.PRIM_*`) is NOT generated: it lives in
 -- the hand-written `runtime/Rt.java` shipped alongside the output. Its CORE is
 -- reached through the AST's runtime nodes (`tFn`, `jApply`, `jDataNew`, ... --
--- see JavaAst.ard's RUNTIME ABI), its periphery by qualified name through `rt`.
+-- see JavaAst.ard's RUNTIME ABI), its periphery through `JavaAxioms.ard`, which
+-- is the only file that spells a runtime member's name.
 --
 -- ONE TARGET, NO OPTIONS. This generator has no configuration: `compileProgram`
 -- is a function of the program alone. There used to be a `JavaTarget` record
@@ -71,137 +72,18 @@
 -- should come back as a parameter when it is written, not be kept warm.
 -- =============================================================================
 
--- Representation of λ□ primitive ints in the generated Java: `java.lang.Long`,
--- Java's built-in 64-bit integer.
---
--- KNOWN MISMATCH (documented, not fixed). A λ□ `prim (primInt, _)` is a 63-bit
--- machine integer with cyclic (mod 2^63) arithmetic -- MetaRocq's
--- erasure/theories/EPrimitive.v has `primIntModel (i : PrimInt63.int)`,
--- lean-to-lambdabox has `PrimModel .primInt := BitVec 63`, and the Rocq refman
--- ("Primitive objects / Primitive integers") specifies the width plus the
--- unsigned/signed views `Uint63`/`Sint63`. No Java type matches that, and our
--- own AST does not either (LambdaBox.ard's `PrimModel primInt => Int` is
--- unbounded). `Long` is an APPROXIMATION, and the closest one available: a
--- fixed-width integer with wraparound, so only the width is wrong (2^64 instead
--- of 2^63) and the sign convention differs, whereas `PrimInt63` reduction is
--- unsigned/cyclic.
---
--- It agrees with the C backend (CertiRocq's prim_int63_*) and the OCaml one
--- (unboxed OCaml `int`, cf. ExtrOCamlInt63) only while values stay well below
--- 2^62, which holds for the current examples.
---
--- `java.math.BigInteger` used to be selectable here and was REMOVED, not lost:
--- unbounded arithmetic matches our AST's `Int` but neither the source's int63
--- nor the other two backends, so it was further from the source semantics than
--- `Long` rather than more conservative -- and nothing in the pipeline selected
--- it.
--- FUTURE WORK: an int63 representation whose literals and `Rt.PRIM_*` ops
--- normalize mod 2^63 (following `Uint63`) -- the only one that could be proved
--- to agree with λ□'s evaluation relation once that relation exists. That is a
--- new REPRESENTATION, so it belongs here as a parameter when written; see
--- LambdaBox.ard's `PrimModel` and notes/RESEARCH_AND_PLAN.md.
-\func intLit (i : Int) : JExpr => jCallStatic "Long.valueOf" (jLongLit i :: nil)
-
--- Suffix of the runtime's primitive-op constants (`Rt.PRIM_ADD_LONG`). Kept as
--- a name of its own rather than spelled into the axiom table below, because
--- `Rt.java` still ships a second family (`_INT`, on BigInteger) and an int63
--- family would be a third: this is the one place that says which one generated
--- code reaches for.
-\func primOpSuffix : String => "LONG"
-
--- The runtime's PERIPHERY -- the primitive-op constants, the ill-formed-input
--- reporters, the entry point -- is referenced by qualified name: those are axiom
--- realizations and I/O, opaque to a λ□ semantics, so they get no AST node (see
--- the SCOPE paragraph in JavaAst.ard). Its CORE is `tFn`/`tData`/`jApply`/... in
--- the AST instead. `runtimeQual`/`runtimeClassName` come from JavaAst.ard: the
--- runtime's name is fixed, since it names the one semantic substrate every
--- generated program shares rather than a representation choice.
-\func rt : String => runtimeQual
-
-\func rtRef : JExpr => jStatic runtimeClassName
-
--- Realization of λ□ axioms (constants without a body) in the Java runtime.
--- Peregrine does this per run via `--attributes` (see ExampleMatMul.ard's
--- matMulAttrsC/OCaml, remapping onto CertiRocq's prim_int63_*); the Java
--- backend instead has this fixed table of axiom name -> runtime expression,
--- since the runtime it targets (`runtime/Rt.java`) is ours. An axiom listed
--- here compiles to the runtime constant, everything else to a throwing stub.
--- Keys are fully mangled kernames: the Lean frontend places machine-Nat
--- primitives under `Nat`, while the hand-written examples use root names.
--- Keeping the module path avoids treating an unrelated `Foo.add` as Nat.add.
-\func javaAxioms : Array (\Sigma String JExpr) =>
-  \let | op (nm : String) => jField rtRef ("PRIM_" ++ nm ++ "_" ++ primOpSuffix)
-       -- An operation that neither takes nor returns a λ□ primitive int is the
-       -- same in both representations, so it has ONE runtime constant.
-       | fixed (nm : String) => jField rtRef nm
-  \in ("c___prim_add_int", op "ADD") ::
-      ("c___prim_mul_int", op "MUL") ::
-      ("c___prim_sub_int", op "SUB") ::
-      ("c___prim_eqb_int", op "EQB") ::
-      ("c__Nat__add", op "ADD") ::
-      ("c__Nat__mul", op "MUL") ::
-      -- NOT `op "SUB"`: Lean's Nat subtraction truncates at zero, while
-      -- `prim_sub_int` is Peregrine's wrapping int63 subtraction.
-      ("c__Nat__sub", jField rtRef ("NAT_SUB_" ++ primOpSuffix)) ::
-      ("c__Nat__beq", op "EQB") ::
-      -- The rest of the machine-Nat operations lean-to-lambdabox leaves as
-      -- axioms. `div`/`mod` follow Lean's total conventions and
-      -- `decEq`/`decLe`/`decLt` return `Decidable`, not `Bool` (see Rt.java).
-      ("c__Nat__div", op "DIV") ::
-      ("c__Nat__mod", op "MOD") ::
-      ("c__Nat__pow", op "POW") ::
-      ("c__Nat__ble", op "BLE") ::
-      ("c__Nat__blt", op "BLT") ::
-      ("c__Nat__decEq", op "DEC_EQ") ::
-      ("c__Nat__decLe", op "DEC_LE") ::
-      ("c__Nat__decLt", op "DEC_LT") ::
-      -- Lean's machine-`Int` operations. `Int` erases to the same λ□ primitive
-      -- int as `Nat`, so `ofNat` is the identity in both representations.
-      ("c__Int__ofNat", fixed "INT_OF_NAT") ::
-      ("c__Int__negSucc", jField rtRef ("INT_NEG_SUCC_" ++ primOpSuffix)) ::
-      ("c__Int__neg", jField rtRef ("INT_NEG_" ++ primOpSuffix)) ::
-      ("c__Int__add", jField rtRef ("INT_ADD_" ++ primOpSuffix)) ::
-      ("c__Int__mul", jField rtRef ("INT_MUL_" ++ primOpSuffix)) ::
-      ("c__Int__ediv", jField rtRef ("INT_EDIV_" ++ primOpSuffix)) ::
-      ("c__Int__emod", jField rtRef ("INT_EMOD_" ++ primOpSuffix)) ::
-      ("c__Int__decEq", jField rtRef ("INT_DEC_EQ_" ++ primOpSuffix)) ::
-      -- Lean's `Array` operations (`@[extern]`, so erasure keeps no body). Only
-      -- `size` returns a Nat, hence only it depends on the representation. The
-      -- Lean frontend writes `!` in a name as `_u33`.
-      ("c__Array__mk", fixed "ARRAY_MK") ::
-      ("c__Array__emptyWithCapacity", fixed "ARRAY_EMPTY_WITH_CAPACITY") ::
-      ("c__Array__push", fixed "ARRAY_PUSH") ::
-      ("c__Array__getInternal", fixed "ARRAY_GET_INTERNAL") ::
-      ("c__Array__get_u33Internal", fixed "ARRAY_GET_BANG_INTERNAL") ::
-      ("c__Array__set_u33", fixed "ARRAY_SET_BANG") ::
-      ("c__Array__swap", fixed "ARRAY_SWAP") ::
-      ("c__Array__size", jField rtRef ("ARRAY_SIZE_" ++ primOpSuffix)) ::
-      -- Rewriting along an equality is the identity at runtime.
-      ("c__Eq__rec", fixed "EQ_REC") ::
-      ("c__Eq__ndrec", fixed "EQ_REC") ::
-      nil
-
--- Lookup by fully mangled kername, including its module path.
-\func lookupAxiom (name : String) (tbl : Array (\Sigma String JExpr)) : Maybe JExpr \elim tbl
-  | nil => nothing
-  | e :: tbl => \case e.1 == name \with {
-    | true => just e.2
-    | false => lookupAxiom name tbl
-  }
-
 -- Compilation result: (statements to run first, value expression).
 \func Out : \Type => \Sigma (Array JStmt) JExpr
 
 -- The environment maps a de Bruijn index to the EXPRESSION that denotes it:
--- usually a variable (`jVar "p3"`), but a `fix` slot is an array element
--- (`x3[0]`), which is why this is an `Array JExpr` and not an `Array JIdent`.
--- Head = index 0.
--- An index larger than the number of enclosing binders is ill-formed input (a
--- closed λ□ program has none), so instead of a silent `null` we emit a runtime
--- call that fails immediately and reports the index and the node.  `n0` is the
--- original index, kept for the message while `n` counts down.
+-- usually a variable (`jVar "p3"`), but a `fix` sibling is a whole forwarding
+-- closure (see `fixMethodRef`), which is why this is an `Array JExpr` and not an
+-- `Array JIdent`. Head = index 0.
+-- An index larger than the number of enclosing binders is ill-formed input; see
+-- `rtUnbound` (JavaAxioms.ard) for what it compiles to and why. `n0` is the
+-- original index, kept for that message while `n` counts down.
 \func nthVar (n : Nat) (env : Array JExpr) (n0 : Nat) (path : String) : JExpr \elim n, env
-  | _, nil => jCallStatic (rt ++ "unbound") (jIntLit n0 :: jStringLit path :: nil)
+  | _, nil => rtUnbound n0 path
   | 0, x :: _ => x
   | suc n, _ :: env => nthVar n env n0 path
 
@@ -290,9 +172,8 @@
   | bvar n => (nil, nthVar n env n path)
 
   -- A locally-nameless free variable has no Java counterpart at all (the
-  -- serializer likewise emits `tVar_UNREACHABLE`), so compile it to a throwing
-  -- runtime call naming the variable rather than to a silent `null`.
-  | fvar v => (nil, jCallStatic (rt ++ "freeVar") (jStringLit v.varName :: jStringLit path :: nil))
+  -- serializer likewise emits `tVar_UNREACHABLE`); see `rtFreeVar`.
+  | fvar v => (nil, rtFreeVar v.varName path)
 
   | prim (primInt, i) => (nil, intLit i)
 
@@ -434,7 +315,7 @@
       | just body =>
         \let | o => compileExpr nil "" body
         \in constMethod name (appendStmts o.1 (jReturn o.2 :: nil))
-      | nothing => \case lookupAxiom name javaAxioms \with {
+      | nothing => \case axiomImpl name \with {
         | just impl => constMethod name (jReturn impl :: nil)
         | nothing =>
           constMethod name
