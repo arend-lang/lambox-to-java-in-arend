@@ -68,6 +68,7 @@ Everything else belongs to `--all` before a commit.
                    eval-ast.sh, regen-arend-asts.sh, extract-lean-benchmarks.sh
     work/          gitignored scratch, work/<program>/<backend>/
     results.tsv    append-only history, one row per program per run
+    benchmarks.md  which programs are worth TIMING, and the recorded baseline
 
 A stage script takes positional arguments only and knows nothing about
 programs or corpora; it can always be re-run by hand:

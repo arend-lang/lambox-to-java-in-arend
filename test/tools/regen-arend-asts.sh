@@ -37,7 +37,10 @@ sexpr_def() {
     example) printf 'ExamplePrint:exampleSexpr\n' ;;
     peano)   printf 'ExamplePrint:peanoSexpr\n' ;;
     matmul)  printf 'ExamplePrint:matMulSexpr\n' ;;
-    *)       die "no Arend source for program: $1 (regenerable: example peano matmul)" ;;
+    matmul200) printf 'ExamplePrint:matMulSexpr200\n' ;;
+    matmul250) printf 'ExamplePrint:matMulSexpr250\n' ;;
+    matmul300) printf 'ExamplePrint:matMulSexpr300\n' ;;
+    *)       die "no Arend source for program: $1 (regenerable: example peano matmul matmul200 matmul250 matmul300)" ;;
   esac
 }
 
@@ -46,16 +49,19 @@ regen() {
   [ -d "$dir" ] || die "no such program directory: $dir"
   info "regenerating $prog/prog.ast from $(sexpr_def "$prog")"
   "$TOOLS_DIR/extract-arend.sh" "$(sexpr_def "$prog")" "$dir/prog.ast"
-  if [ "$prog" = matmul ]; then
+  case $prog in matmul|matmul200|matmul250|matmul300)
     # Two files, because the two backends remap the four primitive-op axioms
     # onto different native symbols; see runtime/int63/README.md.
     "$TOOLS_DIR/extract-arend.sh" ExamplePrint:matMulAttrsCText     "$dir/prog-c.attr"
-    "$TOOLS_DIR/extract-arend.sh" ExamplePrint:matMulAttrsOCamlText "$dir/prog.attr"
-  fi
+    "$TOOLS_DIR/extract-arend.sh" ExamplePrint:matMulAttrsOCamlText "$dir/prog.attr" ;;
+  esac
 }
 
 if [ $# -gt 0 ]; then
   for prog in "$@"; do regen "$prog"; done
 else
-  for prog in example peano matmul; do regen "$prog"; done
+  # matmul200/matmul300 are known to sexpr_def but have no program directory:
+  # test/benchmarks.md records why 250 is the size that is kept, and either of
+  # the others is one `mkdir` plus a `meta` away.
+  for prog in example peano matmul matmul250; do regen "$prog"; done
 fi

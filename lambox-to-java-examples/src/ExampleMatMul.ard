@@ -305,7 +305,14 @@
 -- SIZE / randNat / randVec / randMat / res
 -- ---------------------------------------------------------------------------
 
-\func sizeLit : LBTerm => prim (primInt, 130)
+-- The matrix size, and the only thing that differs between the `matmul` and
+-- `matmul250` programs of the test corpus: it is a LITERAL in the term, so the
+-- two serialized programs differ in exactly the four `(tPrim (primInt N))`
+-- occurrences below and are the same size to compile. That is what makes the
+-- pair usable as a runtime benchmark -- a change to ToJava that shows up only at
+-- 250 is a change in the generated code's runtime, not in its compilation.
+-- See test/benchmarks.md for the sizes that were measured and why 250 won.
+\func sizeLitOf (n : Nat) : LBTerm => prim (primInt, n)
 
 \func randNatRef  : LBTerm => const (\new Kername (mpFile nil) "randNat")
 \func randVecRef  : LBTerm => const (\new Kername (mpFile nil) "randVec")
@@ -314,12 +321,12 @@
 
 \func randNatBody : LBTerm => prim (primInt, 1)
 
-\func randVecBody : LBTerm => app2 funToVecRef sizeLit (lambda anon randNatRef)
+\func randVecBodyOf (n : Nat) : LBTerm => app2 funToVecRef (sizeLitOf n) (lambda anon randNatRef)
 
-\func randMatBody : LBTerm => app2 funToVecRef sizeLit (lambda anon randVecRef)
+\func randMatBodyOf (n : Nat) : LBTerm => app2 funToVecRef (sizeLitOf n) (lambda anon randVecRef)
 
-\func resBody : LBTerm =>
-  app7 matMulRef (prim (primInt, 0)) primAddRef primMulRef sizeLit sizeLit randMatRef randMatRef
+\func resBodyOf (n : Nat) : LBTerm =>
+  app7 matMulRef (prim (primInt, 0)) primAddRef primMulRef (sizeLitOf n) (sizeLitOf n) randMatRef randMatRef
 
 
 -- ---------------------------------------------------------------------------
@@ -396,13 +403,13 @@
 -- declaration may only reference declarations that come AFTER it in this
 -- list -- dependents first, dependencies last (the reverse of a normal
 -- "declare before use" order).
-\func decls : GlobalDeclarations =>
+\func declsOf (n : Nat) : GlobalDeclarations =>
   (\new Kername (mpFile nil) "sumRes",    constantDecl (\new ConstantBody (just sumResBody))) ::
   (\new Kername (mpFile nil) "sumMat",    constantDecl (\new ConstantBody (just sumMatFix))) ::
   (\new Kername (mpFile nil) "sumList",   constantDecl (\new ConstantBody (just sumListFix))) ::
-  (\new Kername (mpFile nil) "res",       constantDecl (\new ConstantBody (just resBody))) ::
-  (\new Kername (mpFile nil) "randMat",   constantDecl (\new ConstantBody (just randMatBody))) ::
-  (\new Kername (mpFile nil) "randVec",   constantDecl (\new ConstantBody (just randVecBody))) ::
+  (\new Kername (mpFile nil) "res",       constantDecl (\new ConstantBody (just (resBodyOf n)))) ::
+  (\new Kername (mpFile nil) "randMat",   constantDecl (\new ConstantBody (just (randMatBodyOf n)))) ::
+  (\new Kername (mpFile nil) "randVec",   constantDecl (\new ConstantBody (just (randVecBodyOf n)))) ::
   (\new Kername (mpFile nil) "randNat",   constantDecl (\new ConstantBody (just randNatBody))) ::
   (\new Kername (mpFile nil) "matMul",    constantDecl (\new ConstantBody (just matMulBody))) ::
   (\new Kername (mpFile nil) "funToVec",  constantDecl (\new ConstantBody (just funToVecBody))) ::
@@ -427,7 +434,9 @@
 -- Entry point is sumRes (prints a single number, expected 2197000) rather
 -- than res (which would print the full 130x130 nested Data tree). Swap to
 -- `resRef` if you want to inspect the raw matrix instead.
-\func matMulProgram : LBProgram => (decls, sumResRef)
+\func matMulProgramOf (n : Nat) : LBProgram => (declsOf n, sumResRef)
+
+\func matMulProgram : LBProgram => matMulProgramOf 130
 
 -- ---------------------------------------------------------------------------
 -- Peregrine attributes configs: realize the 4 primitive-op axioms per
