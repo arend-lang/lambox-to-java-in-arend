@@ -732,12 +732,7 @@ public final class Prog {
       } };
     } };
   }
-  public static Object __main(){
+  public static Object body(){
     return c___suite_list_sum_foldr();
-  }
-  public static void main(String[] args){
-    Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
-      return __main();
-    } });
   }
 }

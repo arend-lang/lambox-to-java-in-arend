@@ -11,12 +11,7 @@ public final class Prog {
     return new Rt.Data(0, new Object[]{  });
   }
   // inductive c___PUnit: erased; values use Data(tag, fields)
-  public static Object __main(){
+  public static Object body(){
     return c___suite_unit();
-  }
-  public static void main(String[] args){
-    Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
-      return __main();
-    } });
   }
 }

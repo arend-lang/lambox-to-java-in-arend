@@ -14,8 +14,12 @@
 # which is what run.py passes as well: deriving it from the program id is what
 # keeps two programs from overwriting each other's Imported module.
 #
-# build compiles Prog.java together with the hand-written runtime Rt.java
-# (Fn, Data, BOX, PRIM_*), copied in next to it.
+# build compiles Prog.java together with TWO hand-written files copied in next
+# to it: the runtime Rt.java (Fn, Data, BOX, PRIM_*), and Main.java -- the entry
+# point, instantiated from runtime/Main.java.in by substituting the generated
+# class name. The extractor emits no `main`: a generated class is a library
+# exposing `public static Object body()`, so running it is the caller's job, and
+# here the caller is this script. See runtime/Main.java.in.
 #
 # run runs the compiled program; its output goes to stdout and, verbatim, to
 # <outdir>/output.txt so the backends can be compared. $JAVA_RUN_STACK and
@@ -52,16 +56,23 @@ build)
   [ -f "$outdir/Prog.java" ] || die "no generated Prog.java in $outdir (run gen first)"
   require_tool "$JAVAC" "set JAVAC (or JAVA) to a JDK"
   run_cmd cp "$JAVA_RUNTIME_DIR/Rt.java" "$outdir/Rt.java"
-  run_cmd "$JAVAC" -d "$outdir" "$outdir/Rt.java" "$outdir/Prog.java"
+  # The entry point, with the generated class name substituted in. `Prog` is
+  # what stages/java.sh's gen asks the generator for (compileProgram's `name`
+  # argument), so the two have to agree; they agree here.
+  sed 's/@PROG@/Prog/g' "$JAVA_RUNTIME_DIR/Main.java.in" >"$outdir/Main.java" ||
+    die "could not instantiate Main.java from $JAVA_RUNTIME_DIR/Main.java.in"
+  info "+ sed s/@PROG@/Prog/g Main.java.in > $outdir/Main.java"
+  run_cmd "$JAVAC" -d "$outdir" "$outdir/Rt.java" "$outdir/Prog.java" "$outdir/Main.java"
   ;;
 
 run)
   outdir=$(abs_dir "${1:?usage: java.sh run <outdir>}")
-  [ -f "$outdir/Prog.class" ] || die "nothing compiled in $outdir (run build first)"
+  [ -f "$outdir/Main.class" ] || die "nothing compiled in $outdir (run build first)"
   require_tool "$JAVA" "set JAVA to a JDK's java"
+  # `Main`, not `Prog`: the generated class has no entry point (see the header).
   # shellcheck disable=SC2086
   run_cmd_capture "$outdir/output.txt" \
-    "$JAVA" "$JAVA_RUN_STACK" $JAVA_RUN_FLAGS -cp "$outdir" Prog
+    "$JAVA" "$JAVA_RUN_STACK" $JAVA_RUN_FLAGS -cp "$outdir" Main
   ;;
 
 *) die "unknown stage: $stage (gen|build|run)" ;;

@@ -53,7 +53,10 @@ JAVA_RUN_STACK=-Xss512m
 # alternatives) is naturally that big, and missing the JIT is a cliff, not a
 # slope (measured 24 s vs 6 s on lean-deriv).
 JAVA_RUN_FLAGS=-XX:-DontCompileHugeMethods
-JAVA_RUNTIME_DIR="$AREND_PROJECT/runtime"  # the hand-written Rt.java (Fn, Data, BOX, PRIM_*)
+# The hand-written Java that ships with generated code: Rt.java (Fn, Data, BOX,
+# PRIM_*) and Main.java.in, the entry-point template. Both are compiled next to
+# the generated class by stages/java.sh build -- the extractor emits no `main`.
+JAVA_RUNTIME_DIR="$AREND_PROJECT/runtime"
 
 # --- Importing external λ□ programs --------------------------------------
 # .ast files from Rocq/Lean/Agda are normalized with Peregrine's `ast box`,

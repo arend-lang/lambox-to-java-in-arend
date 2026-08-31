@@ -32,7 +32,7 @@
 -- Hence the `mkArray {String} {xs.len} (\lam i => .. (xs i))` shape inside the
 -- cycle; the per-child `String`s are then combined by `concatStr`/`joinStr`,
 -- which call nothing. Everything OUTSIDE the cycle (`printStmts`,
--- `printMembers`, the parameter list) does use `map`.
+-- `printMembers`) does use `map`.
 --
 -- LAYOUT. Unlike the previous string generator (everything on one line), output
 -- is indented: `ind` counts two-space levels. It is otherwise deliberately dumb
@@ -47,18 +47,19 @@
 
 \func printType (t : JType) : String \elim t
   | tObject => "Object"
-  | tVoid => "void"
+  -- The two runtime types are the only ones whose spelling is not in the node;
+  -- `runtimeClassName` (JavaAst.ard) is the single place it is decided.
+  | tFn => runtimeQual ++ "Fn"
+  | tData => runtimeQual ++ "Data"
   | tClass q => q
-  | tArray t => printType t ++ "[]"
 
 -- `ind` is the indentation of the LINE this expression appears on; it only
--- matters for `jAnonFn`, whose body occupies further lines.
+-- matters for `jClosure`, whose body occupies further lines.
 \func printExpr (ind : Nat) (e : JExpr) : String \elim e
   | jVar x => x
   | jStatic q => q
   | jField e f => printExpr ind e ++ "." ++ f
-  | jIndex e i => printExpr ind e ++ "[" ++ printExpr ind i ++ "]"
-  -- Fully parenthesized: a cast binds LOOSER than `.f` / `.m(..)` / `[i]`, so
+  -- Fully parenthesized: a cast binds LOOSER than `.f` and `.m(..)`, so
   -- `(Rt.Fn)(x).apply(y)` would cast the result of the call. Wrapping the whole
   -- cast is what makes the printer precedence-free.
   | jCast t e => "((" ++ printType t ++ ")(" ++ printExpr ind e ++ "))"
@@ -70,14 +71,27 @@
   | jNew t args =>
     "new " ++ printType t ++ "("
       ++ joinStr ", " (mkArray {String} {args.len} (\lam i => printExpr ind (args i))) ++ ")"
-  | jNewArrayInit t es =>
-    "new " ++ printType t ++ "[]{ "
-      ++ joinStr ", " (mkArray {String} {es.len} (\lam i => printExpr ind (es i))) ++ " }"
-  | jNewArraySized t n => "new " ++ printType t ++ "[" ++ printExpr ind n ++ "]"
-  | jAnonFn iface p body =>
-    "new " ++ printType iface ++ "(){ public Object apply(Object " ++ p ++ "){\n"
+  -- The runtime ABI. Each of these spells out what its string-based predecessor
+  -- built out of `jCast`/`jInvoke`/`jField` and an array index, character for
+  -- character -- the reification had to leave generated output untouched, and that
+  -- was checked by regenerating the whole corpus and diffing.
+  -- Note the casts are written out here rather than by recursing on a
+  -- `jCast`-wrapped subterm: `printExpr ind (jCast tFn f)` would recurse on a
+  -- CONSTRUCTED term, which the termination checker rejects (see above).
+  | jBox => runtimeQual ++ "BOX"
+  -- Parenthesized exactly like `jCast`, for the same reason: a cast binds looser
+  -- than `.apply(..)`, so the cast must wrap only the function.
+  | jApply f x =>
+    "((" ++ printType tFn ++ ")(" ++ printExpr ind f ++ ")).apply(" ++ printExpr ind x ++ ")"
+  | jClosure p body =>
+    "new " ++ printType tFn ++ "(){ public Object apply(Object " ++ p ++ "){\n"
       ++ concatStr (mkArray {String} {body.len} (\lam i => printStmt (suc ind) (body i)))
       ++ indentStr ind ++ "} }"
+  | jDataNew tag fs =>
+    "new " ++ printType tData ++ "(" ++ natToStr tag ++ ", new " ++ printType tObject ++ "[]{ "
+      ++ joinStr ", " (mkArray {String} {fs.len} (\lam i => printExpr ind (fs i))) ++ " })"
+  | jDataTag d => printExpr ind d ++ ".tag"
+  | jDataField d i => printExpr ind d ++ ".fields[" ++ natToStr i ++ "]"
   | jQualThis c => c ++ ".this"
   | jStringLit s => "\"" ++ s ++ "\""
   | jIntLit n => natToStr n
@@ -121,20 +135,18 @@
     \in indentStr ind ++ "class " ++ c ++ " {\n" ++ concatStr methods ++ indentStr ind ++ "}\n"
   | jThrow e => indentStr ind ++ "throw " ++ printExpr ind e ++ ";\n"
   | jReturn e => indentStr ind ++ "return " ++ printExpr ind e ++ ";\n"
-  | jExprStmt e => indentStr ind ++ printExpr ind e ++ ";\n"
   | jComment s => indentStr ind ++ "// " ++ s ++ "\n"
 
 -- Outside the printExpr/printStmt cycle, so `map` over the block is fine here.
 \func printStmts (ind : Nat) (ss : Array JStmt) : String => concatStr (map (printStmt ind) ss)
 
-\func printParam (p : JParam) : String => printType p.paramType ++ " " ++ p.paramName
-
+-- Every generated method is `public static Object <name>()`: the modifiers, the
+-- return type and the empty parameter list are not in the AST because they have
+-- no other possible value (see `JMethod`).
 \func printMethod (ind : Nat) (m : JMethod) : String =>
-  \let | modifiers : String => \case m.mIsStatic \with { | true => "public static " | false => "public " }
-  \in indentStr ind ++ modifiers ++ printType m.mReturn ++ " " ++ m.mName ++ "("
-        ++ joinStr ", " (map printParam m.mParams) ++ "){\n"
-        ++ printStmts (suc ind) m.mBody
-        ++ indentStr ind ++ "}\n"
+  indentStr ind ++ "public static " ++ printType tObject ++ " " ++ m.mName ++ "(){\n"
+    ++ printStmts (suc ind) m.mBody
+    ++ indentStr ind ++ "}\n"
 
 \func printMember (ind : Nat) (mem : JMember) : String \elim mem
   | jMethod m => printMethod ind m

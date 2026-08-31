@@ -16,7 +16,7 @@
 --
 -- It builds `JavaAst` values (`JavaAst.ard`), NOT source text: the target
 -- language is defined by that AST, and spelling it out is the sole job of the
--- trusted printer (`JavaPrint.ard`). `compileProgramWith` composes the two, so
+-- trusted printer (`JavaPrint.ard`). `compileProgram` composes the two, so
 -- callers still get a `String`.
 --
 -- Termination approach: Arend's foetus/size-change checker rejects a separate
@@ -40,29 +40,39 @@
 -- Design: untyped -> Java `Object`; closures = anonymous inner classes (no
 -- invokedynamic); constructors -> `Data{int tag; Object[] fields}`; constants ->
 -- zero-arg static methods; fix -> a local class with one method per mutually
--- defined function (`FixStyle`, which also keeps the original mutable-`Fn[]`
--- encoding for comparison).
+-- defined function. The program's term becomes `body()`; no entry point is
+-- generated (see `compileBody`).
 --
--- The fixed part of that encoding (`Fn`, `Data` + its `toString`, `BOX`) is NOT
--- generated: it lives in the hand-written `runtime/Rt.java` shipped alongside
--- the output, and generated code refers to it through `rt` below.
+-- The runtime (`Fn`, `Data`, `BOX`, `Rt.PRIM_*`) is NOT generated: it lives in
+-- the hand-written `runtime/Rt.java` shipped alongside the output. Its CORE is
+-- reached through the AST's runtime nodes (`tFn`, `jApply`, `jDataNew`, ... --
+-- see JavaAst.ard's RUNTIME ABI), its periphery by qualified name through `rt`.
 --
--- Everything target-specific (the runtime class name and the representation of
--- λ□ primitive ints) is collected in the `JavaTarget` record below, which the
--- generator takes as an instance parameter instead of threading a
--- representation argument through every definition.
+-- ONE TARGET, NO OPTIONS. This generator has no configuration: `compileProgram`
+-- is a function of the program alone. There used to be a `JavaTarget` record
+-- carrying the runtime class name, a `fix` encoding and an int representation,
+-- with three instances. All three axes are now settled, and each was retired
+-- for its own reason:
+--
+--   * the runtime class name had one value in every instance, and is now a
+--     constant next to the AST nodes whose spelling it decides
+--     (`runtimeClassName`, JavaAst.ard);
+--   * the `fix` encoding was a genuine A/B (mutable `Fn[]` knot-tying vs the
+--     local class), and it was decided -- see the `fix` clause of `compileExpr`
+--     for what the surviving encoding buys;
+--   * the int representation was `Long` or `BigInteger`, and `BigInteger` was
+--     never the better approximation of λ□'s int63 (see KNOWN MISMATCH below),
+--     only the unbounded one.
+--
+-- The point of removing them is not tidiness. Every option is a case a Java
+-- semantics would have to interpret and a correctness proof would have to
+-- discharge, so the configuration surface is part of the thing being verified.
+-- A new representation (`int63`, the one that could actually be proved right)
+-- should come back as a parameter when it is written, not be kept warm.
 -- =============================================================================
 
--- A Java compilation target: the runtime it talks to plus the representation it
--- picks for λ□ primitive ints. This is a configuration record (no classifying
--- field), so it is passed EXPLICITLY once at the top (`compileProgramWith`) and
--- inferred from there on, as a local instance, by everything it calls.
---
--- Adding a new representation is adding a new value of this record -- no new
--- constructor and no new `\elim` clause anywhere in the generator.
---
--- Representation of λ□ primitive ints in the generated Java (`intLit` /
--- `primOpSuffix`).
+-- Representation of λ□ primitive ints in the generated Java: `java.lang.Long`,
+-- Java's built-in 64-bit integer.
 --
 -- KNOWN MISMATCH (documented, not fixed). A λ□ `prim (primInt, _)` is a 63-bit
 -- machine integer with cyclic (mod 2^63) arithmetic -- MetaRocq's
@@ -71,94 +81,44 @@
 -- ("Primitive objects / Primitive integers") specifies the width plus the
 -- unsigned/signed views `Uint63`/`Sint63`. No Java type matches that, and our
 -- own AST does not either (LambdaBox.ard's `PrimModel primInt => Int` is
--- unbounded). So both targets below are approximations, and the caller picks:
---   * `targetLong`       -- java.lang.Long: Java's built-in 64-bit integer. The
---     DEFAULT (see `compileProgram`), because it is the closer approximation:
---     it is a fixed-width integer with wraparound, so only the width is wrong
---     (2^64 instead of 2^63) and the sign convention differs, whereas
---     `PrimInt63` reduction is unsigned/cyclic. It is also much faster.
---   * `targetBigInteger` -- java.math.BigInteger: unbounded, never overflows,
---     but boxed arithmetic and NO wraparound. Matches OUR AST's `Int`, not the
---     source's int63 nor the C/OCaml int63 runtimes, so it is further from the
---     source semantics than `targetLong`, not more conservative. Kept because
---     unbounded arithmetic is occasionally useful when debugging.
--- Both agree with the C backend (CertiRocq's prim_int63_*) and the OCaml one
+-- unbounded). `Long` is an APPROXIMATION, and the closest one available: a
+-- fixed-width integer with wraparound, so only the width is wrong (2^64 instead
+-- of 2^63) and the sign convention differs, whereas `PrimInt63` reduction is
+-- unsigned/cyclic.
+--
+-- It agrees with the C backend (CertiRocq's prim_int63_*) and the OCaml one
 -- (unboxed OCaml `int`, cf. ExtrOCamlInt63) only while values stay well below
 -- 2^62, which holds for the current examples.
--- FUTURE WORK: a third `targetInt63` value whose literals and
--- `Rt.PRIM_*` ops normalize mod 2^63 (following `Uint63`), which is the only
--- one that could be proved to agree with λ□'s evaluation relation once that
--- exists. See LambdaBox.ard's `PrimModel` and notes/RESEARCH_AND_PLAN.md.
 --
--- Everything below is parameterized by this choice; there is no default hidden
--- inside the generator (see `compileProgramWith` / `compileProgram`).
+-- `java.math.BigInteger` used to be selectable here and was REMOVED, not lost:
+-- unbounded arithmetic matches our AST's `Int` but neither the source's int63
+-- nor the other two backends, so it was further from the source semantics than
+-- `Long` rather than more conservative -- and nothing in the pipeline selected
+-- it.
+-- FUTURE WORK: an int63 representation whose literals and `Rt.PRIM_*` ops
+-- normalize mod 2^63 (following `Uint63`) -- the only one that could be proved
+-- to agree with λ□'s evaluation relation once that relation exists. That is a
+-- new REPRESENTATION, so it belongs here as a parameter when written; see
+-- LambdaBox.ard's `PrimModel` and notes/RESEARCH_AND_PLAN.md.
+\func intLit (i : Int) : JExpr => jCallStatic "Long.valueOf" (jLongLit i :: nil)
 
--- How λ□ `fix` is encoded in Java. Both encodings are kept because they are the
--- object of a comparison -- of the Java semantics a correctness proof would have
--- to talk about, and of the runtime cost (test/benchmarks.md):
---
---   * `fixLocalClass` (the DEFAULT) -- a local class with one method per
---     mutually defined function. The knot is tied STATICALLY, by the class
---     declaration: no mutable cells, no assignment, and nothing whose value
---     depends on when it is read. A sibling used as a VALUE is a one-line
---     forwarding closure created at the point of use.
---   * `fixKnotArray` -- the original: `final Rt.Fn[] x = new Rt.Fn[k];` then
---     `x[j] = ...` for each j, with the environment reading `x[j]` back.
---     Correctness rests on an invariant nothing checks: `x[j]` must not be
---     DEREFERENCED before all k assignments have run. It holds for the λ□ terms
---     we see, because a fix body is a guarded lambda, so the read happens when
---     the closure is applied -- but an unguarded body reads `null` silently.
---     That unwritten side condition is exactly what the local-class encoding
---     removes, and why it exists.
---
--- Both are total: neither rejects a program the other accepts.
-\data FixStyle
-  | fixLocalClass
-  | fixKnotArray
+-- Suffix of the runtime's primitive-op constants (`Rt.PRIM_ADD_LONG`). Kept as
+-- a name of its own rather than spelled into the axiom table below, because
+-- `Rt.java` still ships a second family (`_INT`, on BigInteger) and an int63
+-- family would be a third: this is the one place that says which one generated
+-- code reaches for.
+\func primOpSuffix : String => "LONG"
 
-\class JavaTarget
-  -- Name of the runtime class (see runtime/Rt.java); `rt` below is the qualifier
-  -- used in every emitted reference, so retargeting the runtime is one field.
-  | runtimeClass : String
-  -- Which of the two `fix` encodings to emit; see `FixStyle`.
-  | fixStyle : FixStyle
-  -- A `prim (primInt, i)` literal in this target's representation.
-  | intLit : Int -> JExpr
-  -- Suffix of the runtime's primitive-op constants (`Rt.PRIM_ADD_INT` vs
-  -- `Rt.PRIM_ADD_LONG`); the families are otherwise identical in ABI.
-  | primOpSuffix : String
+-- The runtime's PERIPHERY -- the primitive-op constants, the ill-formed-input
+-- reporters, the entry point -- is referenced by qualified name: those are axiom
+-- realizations and I/O, opaque to a λ□ semantics, so they get no AST node (see
+-- the SCOPE paragraph in JavaAst.ard). Its CORE is `tFn`/`tData`/`jApply`/... in
+-- the AST instead. `runtimeQual`/`runtimeClassName` come from JavaAst.ard: the
+-- runtime's name is fixed, since it names the one semantic substrate every
+-- generated program shares rather than a representation choice.
+\func rt : String => runtimeQual
 
--- Qualifier for every runtime reference (`Rt.`), used to build qualified names
--- for `jCallStatic`/`tClass`; `rtRef` is the same thing as an expression.
-\func rt {t : JavaTarget} : String => runtimeClass ++ "."
-
-\func rtRef {t : JavaTarget} : JExpr => jStatic runtimeClass
-
-\func rtFn {t : JavaTarget} : JType => tClass (rt ++ "Fn")
-
-\func rtData {t : JavaTarget} : JType => tClass (rt ++ "Data")
-
-\func targetLong : JavaTarget \cowith
-  | runtimeClass => "Rt"
-  | fixStyle => fixLocalClass
-  | intLit i => jCallStatic "Long.valueOf" (jLongLit i :: nil)
-  | primOpSuffix => "LONG"
-
-\func targetBigInteger : JavaTarget \cowith
-  | runtimeClass => "Rt"
-  | fixStyle => fixLocalClass
-  | intLit i => jNew (tClass "java.math.BigInteger") (jStringLit (intToStr i) :: nil)
-  | primOpSuffix => "INT"
-
--- `targetLong` with the original `fix` encoding, so the two can be compiled from
--- the same program and compared -- for output (they must agree on every program
--- of the corpus) and for run time (test/benchmarks.md). Not the default; nothing
--- in the pipeline reaches for it except a deliberate A/B.
-\func targetLongKnotArray : JavaTarget \cowith
-  | runtimeClass => "Rt"
-  | fixStyle => fixKnotArray
-  | intLit i => jCallStatic "Long.valueOf" (jLongLit i :: nil)
-  | primOpSuffix => "LONG"
+\func rtRef : JExpr => jStatic runtimeClassName
 
 -- Realization of λ□ axioms (constants without a body) in the Java runtime.
 -- Peregrine does this per run via `--attributes` (see ExampleMatMul.ard's
@@ -169,7 +129,7 @@
 -- Keys are fully mangled kernames: the Lean frontend places machine-Nat
 -- primitives under `Nat`, while the hand-written examples use root names.
 -- Keeping the module path avoids treating an unrelated `Foo.add` as Nat.add.
-\func javaAxioms {t : JavaTarget} : Array (\Sigma String JExpr) =>
+\func javaAxioms : Array (\Sigma String JExpr) =>
   \let | op (nm : String) => jField rtRef ("PRIM_" ++ nm ++ "_" ++ primOpSuffix)
        -- An operation that neither takes nor returns a λ□ primitive int is the
        -- same in both representations, so it has ONE runtime constant.
@@ -240,7 +200,7 @@
 -- closed λ□ program has none), so instead of a silent `null` we emit a runtime
 -- call that fails immediately and reports the index and the node.  `n0` is the
 -- original index, kept for the message while `n` counts down.
-\func nthVar {t : JavaTarget} (n : Nat) (env : Array JExpr) (n0 : Nat) (path : String) : JExpr \elim n, env
+\func nthVar (n : Nat) (env : Array JExpr) (n0 : Nat) (path : String) : JExpr \elim n, env
   | _, nil => jCallStatic (rt ++ "unbound") (jIntLit n0 :: jStringLit path :: nil)
   | 0, x :: _ => x
   | suc n, _ :: env => nthVar n env n0 path
@@ -280,18 +240,12 @@
   | nil => (nil, env)
   | _ :: bs =>
     \let | nm => "g" ++ natToStr fieldIx ++ path
-         | st => jLocal true tObject nm (just (jIndex (jField dv "fields") (jIntLit fieldIx)))
+         | st => jLocal true tObject nm (just (jDataField dv fieldIx))
          | r  => bindFields dv (suc fieldIx) bs (jVar nm :: env) path
     \in (st :: r.1, r.2)
 
--- Push the k fix slots arr[0..k-1] onto env; head = arr[k-1] = de Bruijn 0
--- (= the LAST mutually-defined function, matching λ□'s fix_subst). No compileExpr.
-\func pushFix (arr : String) (j k : Nat) (env : Array JExpr) : Array JExpr \elim k
-  | 0 => env
-  | suc k => pushFix arr (suc j) k (jIndex (jVar arr) (jIntLit j) :: env)
-
 -- ---------------------------------------------------------------------------
--- The local-class `fix` encoding (`fixLocalClass`); see `FixStyle`.
+-- The local-class `fix` encoding; see the `fix` clause of `compileExpr`.
 -- ---------------------------------------------------------------------------
 
 -- The local class of the fix at `path`, and its j-th method. Both are derived
@@ -316,22 +270,22 @@
 -- `recv` is the receiver to forward to: `FixP.this` from inside the class
 -- (where `this` is the wrapper closure, not the fix), the instance local from
 -- outside it.
-\func fixMethodRef {t : JavaTarget} (recv : JExpr) (path : String) (j : Nat) : JExpr =>
+\func fixMethodRef (recv : JExpr) (path : String) (j : Nat) : JExpr =>
   \let wp => "w" ++ natToStr j ++ path
-  \in jAnonFn rtFn wp (jReturn (jInvoke recv (fixMethodName j) (jVar wp :: nil)) :: nil)
+  \in jClosure wp (jReturn (jInvoke recv (fixMethodName j) (jVar wp :: nil)) :: nil)
 
 -- Push the k siblings onto env as forwarding closures; head = f(k-1) = de
 -- Bruijn 0, the same order `pushFix` establishes for the array encoding
 -- (λ□'s fix_subst). No compileExpr.
-\func pushFixMethods {t : JavaTarget} (recv : JExpr) (path : String) (j k : Nat) (env : Array JExpr)
+\func pushFixMethods (recv : JExpr) (path : String) (j k : Nat) (env : Array JExpr)
   : Array JExpr \elim k
   | 0 => env
   | suc k => pushFixMethods recv path (suc j) k (fixMethodRef recv path j :: env)
 
 -- Core compiler. `path` uniquely identifies this node; binder names and child
 -- paths are derived from it, so no state threading is needed.
-\func compileExpr {tgt : JavaTarget} (env : Array JExpr) (path : String) (t : LBTerm) : Out \elim t
-  | box => (nil, jField rtRef "BOX")
+\func compileExpr (env : Array JExpr) (path : String) (t : LBTerm) : Out \elim t
+  | box => (nil, jBox)
 
   | bvar n => (nil, nthVar n env n path)
 
@@ -347,12 +301,12 @@
   | app f a =>
     \let | of => compileExpr env ("F" ++ path) f
          | oa => compileExpr env ("A" ++ path) a
-    \in (appendStmts of.1 oa.1, jInvoke (jCast rtFn of.2) "apply" (oa.2 :: nil))
+    \in (appendStmts of.1 oa.1, jApply of.2 oa.2)
 
   | lambda _ body =>
     \let | pv => "p" ++ path
          | ob => compileExpr (jVar pv :: env) ("L" ++ path) body
-    \in (nil, jAnonFn rtFn pv (appendStmts ob.1 (jReturn ob.2 :: nil)))
+    \in (nil, jClosure pv (appendStmts ob.1 (jReturn ob.2 :: nil)))
 
   | letIn _ value body =>
     \let | ov => compileExpr env ("V" ++ path) value
@@ -363,10 +317,7 @@
   -- construct: recurse inline over the Array of args.
   | construct _ cidx args =>
     \let | results => mkArray {Out} {args.len} (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
-    \in (concatStmts results,
-         jNew rtData (jIntLit cidx ::
-                      jNewArrayInit tObject (map (\lam r => r.2) results) ::
-                      nil))
+    \in (concatStmts results, jDataNew cidx (map (\lam r => r.2) results))
 
   -- case: switch on the scrutinee's tag; each branch binds fields[npars ..] then
   -- evaluates its body. We map inline over `brs i`, binding the body by pattern.
@@ -385,9 +336,9 @@
                   | ob  => compileExpr bnd.2 bp (brs i).2
              \in (i, appendStmts bnd.1 (appendStmts ob.1 (jAssign (jVar rv) ob.2 :: nil))))
     \in (appendStmts os.1
-           (jLocal true rtData dv (just (jCast rtData os.2)) ::
+           (jLocal true tData dv (just (jCast tData os.2)) ::
             jLocal false tObject rv nothing ::
-            jSwitch (jField (jVar dv) "tag") cases
+            jSwitch (jDataTag (jVar dv)) cases
               (jThrow (jNew (tClass "RuntimeException") (jStringLit "no matching branch" :: nil)) :: nil) ::
             nil),
          jVar rv)
@@ -396,45 +347,43 @@
   | proj pinfo scrut =>
     \let | os => compileExpr env ("P" ++ path) scrut
     \in (os.1,
-         jIndex (jField (jCast rtData os.2) "fields")
-                (jIntLit (pinfo.projParamCount Nat.+ pinfo.projFieldIdx)))
+         jDataField (jCast tData os.2) (pinfo.projParamCount Nat.+ pinfo.projFieldIdx))
 
-  -- fix: two encodings, picked by the target's `fixStyle` (see `FixStyle` for
-  -- what is being compared). Both map inline over `defs j`, projecting the body
-  -- directly (`(defs j).defBody`), same reasoning as `case` above -- which is
-  -- also what keeps the mutual recursion with `compileFixMethod` below within
-  -- the termination checker's reach.
+  -- fix: a LOCAL CLASS with one method per mutually defined function, the knot
+  -- tied statically by the class declaration. `Fix<path>.this` is how a method
+  -- reaches its siblings, since the forwarding closure's own `this` is the
+  -- closure. Maps inline over `defs j`, projecting the body directly
+  -- (`(defs j).defBody`), same reasoning as `case` above -- which is also what
+  -- keeps the mutual recursion with `compileFixMethod` below within the
+  -- termination checker's reach.
+  --
+  -- WHAT THIS ENCODING BUYS, since the alternative it replaced is gone and the
+  -- reason should not go with it. The original was a mutable knot:
+  -- `final Rt.Fn[] x = new Rt.Fn[k];` then `x[j] = ..` for each j, with the
+  -- environment reading `x[j]` back. Its correctness rested on an invariant
+  -- nothing stated or checked -- `x[j]` must not be DEREFERENCED before all k
+  -- assignments have run. That holds for the λ□ terms erasure produces, because
+  -- a fix body is a guarded lambda, so the read happens when the closure is
+  -- applied; an unguarded body silently read `null`. Here there is no cell, no
+  -- assignment, and nothing whose value depends on when it is read, so the side
+  -- condition does not need stating -- and `compileFixMethod`'s second clause
+  -- makes the unguarded case diverge loudly instead of reading an empty slot.
+  -- (The two were also measured against each other: the local class cost 1-5%
+  -- of run time, taken for the semantics. See test/benchmarks.md.)
   | fix defs idx =>
-    \let | k => defs.len
-    \in \case fixStyle \with {
-      -- Local class: one method per mutually defined function, the knot tied by
-      -- the class declaration. `Fix<path>.this` is how a method reaches its
-      -- siblings, since the forwarding closure's own `this` is the closure.
-      | fixLocalClass =>
-        \let | cls  => fixClassName path
-             | inst => "z" ++ path
-             | env' => pushFixMethods (jQualThis cls) path 0 k env
-             | methods => mkArray {\Sigma JIdent JIdent (Array JStmt)} {k} (\lam j =>
-                 \let | m => compileFixMethod env' ("y" ++ natToStr j ++ path) (defs j).defBody
-                 \in (fixMethodName j, m.1, m.2))
-        \in (jLocalClass cls methods ::
-             jLocal true (tClass cls) inst (just (jNew (tClass cls) nil)) ::
-             nil,
-             fixMethodRef (jVar inst) path idx)
-      -- Mutable `Fn[]` + knot-tying, the original encoding.
-      | fixKnotArray =>
-        \let | arr => "x" ++ path
-             | env' => pushFix arr 0 k env
-             | assigns => mkArray {Array JStmt} {k} (\lam j =>
-                 \let | ob => compileExpr env' ("y" ++ natToStr j ++ path) (defs j).defBody
-                 \in appendStmts ob.1 (jAssign (jIndex (jVar arr) (jIntLit j)) (jCast rtFn ob.2) :: nil)
-             )
-        \in (jLocal true (tArray rtFn) arr (just (jNewArraySized rtFn (jIntLit k))) ::
-               concatStmtBlocks assigns,
-             jIndex (jVar arr) (jIntLit idx))
-    }
+    \let | k     => defs.len
+         | cls   => fixClassName path
+         | inst  => "z" ++ path
+         | env'  => pushFixMethods (jQualThis cls) path 0 k env
+         | methods => mkArray {\Sigma JIdent JIdent (Array JStmt)} {k} (\lam j =>
+             \let | m => compileFixMethod env' ("y" ++ natToStr j ++ path) (defs j).defBody
+             \in (fixMethodName j, m.1, m.2))
+    \in (jLocalClass cls methods ::
+         jLocal true (tClass cls) inst (just (jNew (tClass cls) nil)) ::
+         nil,
+         fixMethodRef (jVar inst) path idx)
 
--- One method of a `fixLocalClass` local class: (parameter name, body).
+-- One method of a `fix` local class: (parameter name, body).
 --
 -- Mutually recursive with `compileExpr`, and it \elim's the fix def's body in
 -- order to STRIP THE GUARDING LAMBDA -- an inner `\case` would not do, because
@@ -456,7 +405,7 @@
 -- silently dereferences a `null` slot. Erasure output is a lambda in practice,
 -- so the clause is expected to be dead code; it emits a comment saying so, and
 -- `grep` over generated programs is how that is confirmed.
-\func compileFixMethod {tgt : JavaTarget} (env : Array JExpr) (path : String) (t : LBTerm)
+\func compileFixMethod (env : Array JExpr) (path : String) (t : LBTerm)
   : \Sigma JIdent (Array JStmt) \elim t
   | lambda _ inner =>
     \let | pv => "p" ++ path
@@ -466,19 +415,19 @@
     \let | pv => "p" ++ path
          | ot => compileExpr env path t
     \in (pv, jComment "unguarded fix body: eta-expanded (diverges instead of reading an unassigned slot)" ::
-             appendStmts ot.1 (jReturn (jInvoke (jCast rtFn ot.2) "apply" (jVar pv :: nil)) :: nil))
+             appendStmts ot.1 (jReturn (jApply ot.2 (jVar pv)) :: nil))
 
 
 -- ---------------------------------------------------------------------------
 -- Program assembly.
 -- ---------------------------------------------------------------------------
 
--- Every generated member is a `public static Object f(){ .. }`, so this is the
--- only method shape the assembly needs.
+-- Every generated member is a `public static Object f(){ .. }`, and `JMethod`
+-- holds nothing else (see JavaAst.ard), so this is the whole of method assembly.
 \func constMethod (name : String) (body : Array JStmt) : JMember =>
-  jMethod (\new JMethod true tObject name nil body)
+  jMethod (\new JMethod name body)
 
-\func compileDecl {t : JavaTarget} (kd : \Sigma Kername GlobalDecl) : JMember =>
+\func compileDecl (kd : \Sigma Kername GlobalDecl) : JMember =>
   \let | name => mangleKername kd.1
   \in \case kd.2 \with {
     | constantDecl cb => \case cb.cstBody \with {
@@ -497,43 +446,68 @@
       jMemberComment ("inductive " ++ name ++ ": erased; values use Data(tag, fields)")
   }
 
-\func compileDecls {t : JavaTarget} (ds : GlobalDeclarations) : Array JMember =>
+\func compileDecls (ds : GlobalDeclarations) : Array JMember =>
   map (\lam d => compileDecl d) ds
 
--- `__main` holds the program's body; `main` is the entry point printing it.
+-- The NAME OF THE ENTRY VALUE. `body` is a fixed, unmangled name, and it cannot
+-- collide with a compiled λ□ constant: `mangleKername` prefixes every one of
+-- those with `c_`, so the whole unprefixed namespace is free.
+\func bodyMethodName : JIdent => "body"
+
+-- The program's term, as the one method a caller is expected to start from:
 --
--- The body is not evaluated by `main` itself but handed to `Rt.runMain` as a
--- one-argument closure (its argument is ignored, `Rt.BOX` is passed), which runs
--- and prints it on a thread with an explicitly requested stack size. Reason: λ□
--- `fix` compiles to plain, usually non-tail Java recursion, so evaluation depth
--- is bounded by the stack -- and the stack of the primordial thread running
--- `main` is set by the OS, not by the launcher's `-Xss`. Going through a thread
--- we create makes the bound a property of the generated program (tunable with
--- `-Dlambox.stack=<bytes>`) instead of a property of how it was launched; see
--- `Rt.runMain`.
-\func compileMain {tgt : JavaTarget} (t : LBTerm) : Array JMember =>
+--   public static Object body(){ .. return <the program's value>; }
+--
+-- NO ENTRY POINT IS GENERATED. This used to emit `__main` plus a
+-- `public static void main(String[])` that handed `__main` to `Rt.runMain`,
+-- which made every output a runnable program -- and exactly for that reason not
+-- a reusable one: two extracted classes could not sit in one program, because a
+-- λ□ term is a VALUE, not a process, and deciding to print it (or to run it on a
+-- thread with a particular stack size, or to feed it to something else) is the
+-- caller's decision, not the extractor's.
+--
+-- So a `main` is now written by hand, outside. It is five lines, and
+-- `runtime/Main.java.in` is the worked example the harness itself uses:
+--
+--   Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
+--     return <Class>.body();
+--   } });
+--
+-- `Rt.runMain` is unchanged and still where the stack reasoning lives (λ□ `fix`
+-- becomes non-tail Java recursion, and the primordial thread's stack is set by
+-- the OS, not by `-Xss` -- see runtime/Rt.java). Moving `main` out moved that
+-- decision to the caller; it did not delete it.
+\func compileBody (t : LBTerm) : Array JMember =>
   \let | o => compileExpr nil "" t
-  \in constMethod "__main" (appendStmts o.1 (jReturn o.2 :: nil)) ::
-      jMethod (\new JMethod true tVoid "main"
-                 ((\new JParam (tArray (tClass "String")) "args") :: nil)
-                 (jExprStmt (jCallStatic (rt ++ "runMain")
-                              (jAnonFn rtFn "ignored"
-                                 (jReturn (jCallStatic "__main" nil) :: nil) :: nil)) :: nil)) ::
-      nil
+  \in constMethod bodyMethodName (appendStmts o.1 (jReturn o.2 :: nil)) :: nil
 
 -- Only the program-specific class is generated; `Fn`, `Data` (with its
 -- human-readable `toString`) and `BOX` come from the hand-written runtime class
 -- `runtime/Rt.java`, which must be compiled together with this output.
-\func compileClass {t : JavaTarget} (p : LBProgram) : JClass =>
-  \new JClass "Prog" (compileDecls p.1 ++A compileMain p.2)
+--
+-- `name` is what to call the class. It is an ARGUMENT and not the constant
+-- `Prog` it used to be: two λ□ programs extracted independently have to be able
+-- to coexist in one Java program, which a fixed name makes impossible. It is not
+-- a `JavaTarget`-style option either -- it says what to call the output, not how
+-- to compile it, and the same term may legitimately be emitted under two names.
+--
+-- NOTE (not done here): coexisting is not yet the same as COOPERATING. A λ□
+-- `const` compiles to an unqualified `c_foo()` -- see `compileExpr` -- so it is
+-- resolved inside the enclosing class, and two classes still cannot call each
+-- other's constants nor share one copy of `Nat.add`. That needs a resolver
+-- `Kername -> Maybe JQIdent` threaded into `compileExpr`, which is the natural
+-- generalization of `javaAxioms` (an axiom IS a kername resolved to an external
+-- name). Naming the class is the prerequisite, not the feature.
+\func compileClass (name : JIdent) (p : LBProgram) : JClass =>
+  \new JClass name (compileDecls p.1 ++A compileBody p.2)
 
--- The generator and the printer, composed. The int representation is explicit
--- here; `compileProgram` below fixes it to `targetLong`, the representation
--- closest to λ□'s int63 (see `JavaTarget`).
-\func compileProgramWith (t : JavaTarget) (p : LBProgram) : String => printClass (compileClass p)
-
-\func compileProgram (p : LBProgram) : String => compileProgramWith targetLong p
+-- The generator and the printer, composed: the whole backend, as a function of
+-- the class name and the program, and nothing else. There is no
+-- `compileProgramWith` any more -- there is no configuration left to pass (see
+-- ONE TARGET, NO OPTIONS at the top).
+\func compileProgram (name : JIdent) (p : LBProgram) : String =>
+  printClass (compileClass name p)
 
 -- Print a generated program with `putStrLn` (Data.String -> console).
 -- \import Debug
--- \func main => putStrLn (compileProgram (nil, prim (primInt, -44)))
+-- \func main => putStrLn (compileProgram "Prog" (nil, prim (primInt, -44)))

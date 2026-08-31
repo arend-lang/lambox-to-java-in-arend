@@ -52,12 +52,7 @@ public final class Prog {
   }
   // inductive c_Datatypes_Init_Corelib__nat: erased; values use Data(tag, fields)
   // inductive c_Mutual_Tests_Peregrine__Even: erased; values use Data(tag, fields)
-  public static Object __main(){
+  public static Object body(){
     return c_Mutual_Tests_Peregrine__test();
-  }
-  public static void main(String[] args){
-    Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
-      return __main();
-    } });
   }
 }

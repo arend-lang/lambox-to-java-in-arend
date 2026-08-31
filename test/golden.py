@@ -23,7 +23,7 @@ here if the golden file were blessed with the same bug). This is the inner loop;
 
 HOW. One temporary Arend module is written into the project (`GoldenDump*.ard`),
 with one `\func` per selected program whose body is
-`putStrLn ("===== <name> =====\\n" ++ compileProgram <Module>.program)`; ONE
+`putStrLn ("===== <name> =====\\n" ++ compileProgram "Prog" <Module>.program)`; ONE
 Arend invocation typechecks it, which prints all of them; the output is split on
 the markers. The per-program cost is Arend evaluating the generator over that
 program's λ□ term, so the SIZE of the selected terms is what this script's
@@ -163,7 +163,7 @@ def dump_module(selection):
     lines.append("")
     for i, (name, prog) in enumerate(selection):
         lines.append(f'\\func d{i} => putStrLn ("===== {name} =====\\n"'
-                     f" ++ compileProgram Imported.{prog.module()}.program)")
+                     f' ++ compileProgram "Prog" Imported.{prog.module()}.program)')
     return "\n".join(lines) + "\n"
 
 

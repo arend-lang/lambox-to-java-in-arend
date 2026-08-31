@@ -76,12 +76,7 @@ public final class Prog {
     } };
   }
   // inductive c_Datatypes_Init_Corelib__list: erased; values use Data(tag, fields)
-  public static Object __main(){
+  public static Object body(){
     return c_Map_Tests_Peregrine__ys();
-  }
-  public static void main(String[] args){
-    Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
-      return __main();
-    } });
   }
 }

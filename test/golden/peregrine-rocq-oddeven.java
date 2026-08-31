@@ -56,12 +56,7 @@ public final class Prog {
   }
   // inductive c_OddEven_Tests_Peregrine__Bool: erased; values use Data(tag, fields)
   // inductive c_Datatypes_Init_Corelib__nat: erased; values use Data(tag, fields)
-  public static Object __main(){
+  public static Object body(){
     return c_OddEven_Tests_Peregrine__test();
-  }
-  public static void main(String[] args){
-    Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
-      return __main();
-    } });
   }
 }

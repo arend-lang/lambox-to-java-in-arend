@@ -17,7 +17,7 @@
 --   * `prim` is simplified: MetaRocq/LBTerm carry 63-bit primitive ints; Arend
 --     has no fixed-width BitVec, so we model the payload with the unbounded
 --     Prelude `Int`.  This is the FIRST of three layers of the known int63
---     mismatch -- see the `PrimModel` comment below and `JavaTarget` in
+--     mismatch -- see the `PrimModel` comment below and KNOWN MISMATCH in
 --     ToJava.ard.
 
 \import Data.Bool
@@ -90,7 +90,7 @@
 -- Int (and pin down the signed/unsigned view -- MetaRocq's EWcbvEval and
 -- ExtrOCamlInt63 follow the unsigned/cyclic `Uint63` semantics), or keep this
 -- encoding and state the 2^62-ish range side condition under which all backends
--- agree.  See ToJava.ard (`JavaTarget`) and notes/RESEARCH_AND_PLAN.md.
+-- agree.  See ToJava.ard (KNOWN MISMATCH) and notes/RESEARCH_AND_PLAN.md.
 \func PrimModel (_ : PrimTag) : \Set0  -- TODO : is this ok to be a \Set ?
   | primInt => Int
 

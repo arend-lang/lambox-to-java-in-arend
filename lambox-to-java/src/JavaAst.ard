@@ -15,15 +15,22 @@
 --
 -- SCOPE. Deliberately exactly what `compileExpr`/`compileDecl` emit, no
 -- more: no arithmetic operators, no loops, no conditionals, no visibility
--- modifiers besides `public static`, no generics, no interfaces. Classes come in
--- exactly three shapes: the single generated program class, the anonymous
--- one-method classes that are our closures (`jAnonFn`), and the local classes
--- that tie a `fix` knot (`jLocalClass`). Generated code is
--- untyped-style: every value has static type `Object` and is cast where needed,
--- so this fragment is NOT Featherweight Java and is not meant to be.
--- The fixed runtime (`Rt.Fn`, `Rt.Data`, `Rt.BOX`, `Rt.PRIM_*`) is hand-written
--- (`runtime/Rt.java`) and appears here only as referenced names, never as
--- declarations.
+-- modifiers besides `public static`, no generics, no interfaces, no `void`, no
+-- array types and no entry point. Classes come in exactly three shapes: the
+-- generated program class, the anonymous one-method classes that are our
+-- closures (`jClosure`), and the local classes that tie a `fix` knot
+-- (`jLocalClass`). Generated code is untyped-style: every value has static type
+-- `Object` and is cast where needed, so this fragment is NOT Featherweight Java
+-- and is not meant to be.
+-- The fixed runtime is hand-written (`runtime/Rt.java`) and never DECLARED
+-- here, but it is not all referenced the same way. Its semantic core -- the
+-- function type, the data representation, the erased value, and the operations
+-- on them -- has dedicated nodes (`tFn`, `tData`, `jApply`, `jClosure`,
+-- `jDataNew`, `jDataTag`, `jDataField`, `jBox`; see RUNTIME ABI below), because
+-- those are what a correctness statement quantifies over. Its periphery --
+-- `Rt.PRIM_*`, `Rt.unbound`, the entry point -- is referenced by NAME
+-- (`jStatic`/`jField`/`jCallStatic`), because those are axiom realizations and
+-- I/O, opaque to a λ□ semantics and rightly outside this AST.
 --
 -- COMPARE (rationale and the longer survey live in notes/RESEARCH_AND_PLAN.md):
 --   * Malfunction.v (metarocq-malfunction) -- the verified λ□ backend; its
@@ -35,8 +42,8 @@
 --     CertiCoq's C backend uses (`printClight.ml`).
 --   * Featherweight Java (Igarashi-Pierce-Wadler) -- `x | e.f | e.m(e*) |
 --     new C(e*) | (C)e` is exactly the expression core here; our extra nodes
---     (literals, arrays, assignment, statements) are the ones a code generator
---     cannot avoid.
+--     (literals, assignment, statements) are the ones a code generator cannot
+--     avoid.
 --   * Jinja / µJava (Isabelle) -- the existing Java-source semantics, and the
 --     dissenting design: Jinja folds statements into expressions, we do not.
 --
@@ -86,18 +93,56 @@
 \func JQIdent => String
 
 -- ---------------------------------------------------------------------------
+-- The runtime class
+-- ---------------------------------------------------------------------------
+
+-- Name of the hand-written runtime class (`runtime/Rt.java`). It appears here,
+-- next to the AST, rather than in the generator, because the RUNTIME ABI NODES
+-- below (`tFn`, `tData`, `jApply`, `jBox`, ...) carry no name of their own: they
+-- mean the runtime's function type, data representation and unit, and this is
+-- the one place that says how those are spelled. Both the printer and the
+-- generator's axiom table read it, so the name is stated once.
+--
+-- It is a constant, not a generator option. It was briefly a field of a
+-- `JavaTarget` record, set to `Rt` by every instance of it -- and unlike the int
+-- representation it is not a choice about how λ□ is REPRESENTED, it is the
+-- identity of the fixed semantic substrate every generated program shares. Making it
+-- configurable would also mean the trusted printer could no longer print a
+-- runtime type without being told which runtime, i.e. it would have to take a
+-- generator option as a parameter.
+\func runtimeClassName : JIdent => "Rt"
+
+-- `Rt.` -- the qualifier of every reference to a runtime member.
+\func runtimeQual : String => runtimeClassName ++ "."
+
+-- ---------------------------------------------------------------------------
 -- Types
 --
--- Only what appears in generated code: `Object` (everything), a named class or
--- interface (`Rt.Fn`, `Rt.Data`, `java.math.BigInteger`, `String`), arrays
--- (`Object[]`, `Rt.Fn[]`), and `void` (only `main`'s return type).
+-- Only what appears in generated code: `Object` (everything -- every value has
+-- static type `Object`), the two runtime types, and a named class
+-- (`RuntimeException`, a `fix` local class).
+--
+-- There is no `void` and no array type: both existed only for the generated
+-- entry point (`void main(String[] args)`), which is no longer generated -- a
+-- program's `main` is now written by hand outside the extractor, so the fragment
+-- has no statement that is not part of computing a value.
+--
+-- `tFn` and `tData` are SEPARATE from `tClass`, even though they print as
+-- `Rt.Fn` and `Rt.Data`: they are the two types the runtime ABI is made of, and
+-- a semantics has to give them meaning (a function space, a tagged product)
+-- rather than treat them as opaque named classes. As `tClass "Rt.Fn"` they were
+-- indistinguishable from any user class that happened to bear that name, so
+-- every rule about application or constructors would have had to match on a
+-- string literal. See the RUNTIME ABI section under `JExpr`.
 -- ---------------------------------------------------------------------------
 
 \data JType
   | tObject
-  | tVoid
+  -- The runtime's one-method function interface: λ□'s function space.
+  | tFn
+  -- The runtime's constructor representation: a tag plus a field array.
+  | tData
   | tClass JQIdent
-  | tArray JType
 
 -- ---------------------------------------------------------------------------
 -- Expressions
@@ -113,11 +158,6 @@
   | jStatic JQIdent
   -- `e.f` -- field access: `d.tag`, `d.fields`, `Rt.BOX`, `Rt.PRIM_ADD_INT`.
   | jField JExpr JIdent
-  -- `e[i]` -- array access: `d.fields[2]`, `x3[1]`.
-  -- There is no arithmetic node, so the one addition the generator used to emit
-  -- (`fields[npars + fieldIdx]` for `proj`) is folded on the Arend side into a
-  -- single `jIntLit`.
-  | jIndex JExpr JExpr
   -- `(T)(e)` -- a downcast; unavoidable, since every value is typed `Object`.
   | jCast JType JExpr
   -- `e.m(args)` -- instance method call: `.apply(a)`, `System.out.println(..)`.
@@ -125,27 +165,73 @@
   -- `m(args)` where `m` may be qualified: a generated constant `c_foo()`,
   -- `Rt.unbound(i, path)`, `Long.valueOf(5L)`.
   | jCallStatic JQIdent (Array JExpr)
-  -- `new T(args)` -- `new Rt.Data(tag, fields)`, `new java.math.BigInteger("7")`,
-  -- `new RuntimeException("no matching branch")`.
+  -- `new T(args)` -- `new RuntimeException("no matching branch")`, and the
+  -- instantiation of a `fix` local class. (A `Rt.Data` is `jDataNew` instead.)
   | jNew JType (Array JExpr)
-  -- `new T[]{ es }` -- an array with an initializer: `new Object[]{ a, b }`.
-  | jNewArrayInit JType (Array JExpr)
-  -- `new T[n]` -- a sized (null-filled, later assigned) array: the `Rt.Fn[k]`
-  -- used to tie the knot for `fix`.
-  | jNewArraySized JType JExpr
-  -- An anonymous class implementing a one-method interface, i.e. our closures:
-  --   `new <iface>(){ public Object apply(Object <param>){ <body> } }`
-  -- The method is not a `JMethod` here but spelled out as (interface, parameter
-  -- name, body): it is always `public Object apply(Object)`, and a record field
-  -- would put `JMethod` into the JExpr/JStmt recursion, which Arend rejects
-  -- (records cannot be part of a mutual `\data` cycle).
-  -- This node is temporary by design: closure conversion (step 5) replaces it
-  -- with named `Closure_<path>` classes.
-  | jAnonFn JType JIdent (Array JStmt)
+  -- --- RUNTIME ABI ---------------------------------------------------------
+  --
+  -- The five nodes below are the ones a λ□ correctness statement is actually
+  -- about: they are λ□'s `box`, `lambda`, `app`, `construct` and the field/tag
+  -- reads that `case` and `proj` perform. Each USED to be a combination of the
+  -- general Java nodes above over hard-coded member-name strings --
+  -- `jInvoke (jCast (tClass "Rt.Fn") f) "apply" [x]`,
+  -- `d.fields[3]` built from a generic array-index node -- which had two costs:
+  --
+  --   * the AST could not distinguish the runtime's application from any other
+  --     call of a method spelled `apply`, so a semantics (and any optimisation
+  --     or scope check) would have to recognise the ABI by matching string
+  --     literals, and would be silently wrong for a program that used those
+  --     names for something else;
+  --   * the invariants were unstated. `jApply` cannot be given a non-`Fn`
+  --     cast, `jDataField` cannot be given a non-`Nat` index, and a closure is
+  --     necessarily over `Fn` -- all of which were previously just facts about
+  --     which expressions the generator happened to build.
+  --
+  -- They are still only ABI, not semantics: what `apply` DOES is fixed by
+  -- `runtime/Rt.java`, and a future semantics assumes it rather than deriving it
+  -- from that file. The point is that it now has a syntactic node to assume it
+  -- OF. How each one is spelled is `JavaPrint.ard`'s business, and every one of
+  -- them prints exactly the text its string-based predecessor did.
+
+  -- `Rt.BOX` -- the value of an erased proof or type (λ□ `box`). A single shared
+  -- object, so this is a constant and not an allocation.
+  | jBox
+  -- `((Rt.Fn)(f)).apply(x)` -- λ□ `app`. The cast is part of the node because
+  -- every value has static type `Object`: it is not an optional annotation but
+  -- how application is spelled in this fragment.
+  | jApply JExpr JExpr
+  -- `new Rt.Fn(){ public Object apply(Object <param>){ <body> } }` -- λ□
+  -- `lambda`, as an anonymous class (no `invokedynamic`).
+  -- The method is not a `JMethod` but spelled out as (parameter name, body): it
+  -- is always `public Object apply(Object)`, and a record field would put
+  -- `JMethod` into the JExpr/JStmt recursion, which Arend rejects (records
+  -- cannot be part of a mutual `\data` cycle).
+  -- Previously `jAnonFn JType ..`, parametrised by the interface -- but `tFn`
+  -- was the only value ever passed, so the parameter existed solely to give a
+  -- semantics a case it had to rule out.
+  -- Temporary by design: closure conversion (step 5) replaces it with named
+  -- `Closure_<path>` classes.
+  | jClosure JIdent (Array JStmt)
+  -- `new Rt.Data(tag, new Object[]{ fields })` -- λ□ `construct`. The tag is a
+  -- `Nat` because it is a constructor index, and the field array is built here
+  -- rather than by a general array-literal node, which is why no such node
+  -- exists any more.
+  | jDataNew Nat (Array JExpr)
+  -- `d.tag` -- the constructor index of a data value; the scrutinee of the
+  -- `switch` a λ□ `case` becomes.
+  | jDataTag JExpr
+  -- `d.fields[i]` -- the i-th field. `Nat`, not `JExpr`: every index the
+  -- generator produces is a literal position, and λ□ offers no computed field
+  -- access. This is also where `proj`'s `npars + idx` is added (on the Arend
+  -- side), which is why the fragment needs no arithmetic node.
+  | jDataField JExpr Nat
+
+  -- --- end RUNTIME ABI -----------------------------------------------------
+
   -- `C.this` -- the enclosing instance of the local class named `C`, as seen
   -- from inside a nested anonymous class. Needed by the local-class encoding of
   -- `fix` (`ToJava.ard`): a sibling of a mutually recursive block is referenced
-  -- from within a `jAnonFn` whose own `this` is the closure, so the forwarding
+  -- from within a `jClosure` whose own `this` is the closure, so the forwarding
   -- call has to name the instance it means.
   -- NOT `jStatic "C.this"`, even though that would print identically: `jStatic`
   -- means a globally resolved name, and this one is resolved in the lexical
@@ -157,8 +243,8 @@
   -- array sizes. Nat, because every such number is a position or a count.
   | jIntLit Nat
   -- A `long` literal (`5L`), i.e. `Int` because it may be negative. Only used
-  -- to build λ□ `prim` int values (`Long.valueOf(5L)`); the `BigInteger`
-  -- representation instead uses `jNew` over a `jStringLit`.
+  -- to build λ□ `prim` int values (`Long.valueOf(5L)`), which is the only
+  -- representation the generator emits (see KNOWN MISMATCH in ToJava.ard).
   | jLongLit Int
 
 -- ---------------------------------------------------------------------------
@@ -176,7 +262,7 @@
   -- `switch (scrut) { cases default: dflt }`, where a case is
   -- `case <tag>: { <stmts> break; }` -- the printer emits the block and the
   -- `break`, so this fragment has no fallthrough. The cases are a `\Sigma`
-  -- rather than a record for the same reason as `jAnonFn` above (and as
+  -- rather than a record for the same reason as `jClosure` above (and as
   -- `LambdaBox.ard`'s `case` branches); Malfunction's
   -- `Mswitch of t * (case list * t) list` makes the same choice.
   | jSwitch JExpr (Array (\Sigma Nat (Array JStmt))) (Array JStmt)
@@ -185,7 +271,7 @@
   -- holding k methods that may call each other. This is the second encoding of
   -- λ□ `fix`: the recursive knot is tied by the class declaration itself, so
   -- there are no mutable cells and no initialization order to reason about.
-  -- Like `jAnonFn`, a method is spelled out as (name, parameter, body) rather
+  -- Like `jClosure`, a method is spelled out as (name, parameter, body) rather
   -- than held as a `JMethod`: every one of them is `public Object m(Object)`,
   -- and a record field would put `JMethod` into the JExpr/JStmt `\data` cycle,
   -- which Arend rejects.
@@ -194,8 +280,6 @@
   | jThrow JExpr
   -- `return e;`
   | jReturn JExpr
-  -- An expression evaluated for its effect only: `System.out.println(..);`.
-  | jExprStmt JExpr
   -- `// <text>` on a line of its own; see COMMENTS above.
   | jComment String
 
@@ -204,15 +288,21 @@
 -- Members and the program class
 -- ---------------------------------------------------------------------------
 
-\record JParam (paramType : JType) (paramName : JIdent)
-
--- A method of the generated class: a constant `c_foo`, `__main`, or `main`.
--- (The `apply` of a closure is part of `jAnonFn` instead, see above.)
+-- A method of the generated class: a λ□ constant (`c_foo`) or the program's
+-- entry value (`body`). (The `apply` of a closure is part of `jClosure`, and a
+-- `fix` sibling part of `jLocalClass`, so neither is a `JMethod`.)
+--
+-- Only a NAME and a BODY. Every method the generator emits is
+-- `public static Object <name>()`: static because the class is a namespace and
+-- never instantiated, `Object` because that is the only type a λ□ value has, and
+-- zero-argument because λ□ constants take no arguments -- a function is a
+-- closure VALUE, not a parameterized method. This record used to carry
+-- `mIsStatic`, `mReturn` and `mParams` as well; all three had a single possible
+-- value once the generated `main` -- the one `void` method, the one with a
+-- parameter, and the only reason `tVoid`, `tArray` and `JParam` existed -- went
+-- away.
 \record JMethod
-  (mIsStatic : Bool)
-  (mReturn : JType)
   (mName : JIdent)
-  (mParams : Array JParam)
   (mBody : Array JStmt)
 
 \data JMember
@@ -220,6 +310,17 @@
   -- `// <text>` in class-body position: what an erased inductive produces.
   | jMemberComment String
 
--- The single generated class (`public final class Prog { ... }`); the runtime
--- class is hand-written and not part of this AST.
+-- One generated class: `public final class <className> { ... }`.
+--
+-- The NAME IS DATA, not the constant `Prog` it used to be, because two λ□
+-- programs extracted separately have to be able to coexist -- and, later, to
+-- call each other. It is an argument of `compileClass`/`compileProgram` rather
+-- than a generator option: it says what to call the output, not how to compile
+-- it.
+--
+-- The class has no entry point. It is a LIBRARY: a `body()` returning the
+-- program's value, plus one method per λ□ constant. Whoever wants to run it
+-- writes a `main` that calls `body()` (see `runtime/Main.java.in`), which is
+-- what makes the output reusable and combinable instead of a program that can
+-- only print itself.
 \record JClass (className : JIdent) (classMembers : Array JMember)

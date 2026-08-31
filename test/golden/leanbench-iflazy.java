@@ -127,12 +127,7 @@ public final class Prog {
   public static Object c__Nat__decEq(){
     return Rt.PRIM_DEC_EQ_LONG;
   }
-  public static Object __main(){
+  public static Object body(){
     return c___suite_iflazy();
-  }
-  public static void main(String[] args){
-    Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
-      return __main();
-    } });
   }
 }

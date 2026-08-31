@@ -1,9 +1,10 @@
 // Fixed runtime for the generated Java code (see ToJava.ard).
 //
 // This file is *not* generated: the compiler only emits the program-specific
-// class `Prog`, which references the types below as `Rt.Fn`, `Rt.Data` and
-// `Rt.BOX`. Compile it next to the generated `Prog.java`:
-//   javac -d <dir> <dir>/Rt.java <dir>/Prog.java
+// class, which references the types below as `Rt.Fn`, `Rt.Data` and `Rt.BOX`.
+// That class has no entry point, so a hand-written `main` is compiled alongside
+// it (runtime/Main.java.in):
+//   javac -d <dir> <dir>/Rt.java <dir>/Prog.java <dir>/Main.java
 //
 // Design (matches the untyped λ□ encoding):
 //   * untyped values     -> Object
@@ -21,7 +22,7 @@ public final class Rt {
   }
 
   // `toString` overrides here are purely for making printed program output
-  // human-readable (e.g. inspecting `System.out.println(__main())`): a
+  // human-readable (e.g. inspecting `System.out.println(Prog.body())`): a
   // recursive, indented `tag(\n  field,\n  field\n)` tree, where flat leaves
   // like `0` print with no parens.
   public static final class Data {
@@ -67,7 +68,11 @@ public final class Rt {
 
   // --- Entry point -----------------------------------------------------------
   //
-  // WHY THE GENERATED `main` DOES NOT JUST PRINT `__main()`.
+  // WHY A CALLER'S `main` SHOULD GO THROUGH THIS RATHER THAN PRINT `body()`.
+  //
+  // (The extractor generates no `main` at all: a generated class exposes
+  // `public static Object body()` and nothing else, so the entry point is
+  // hand-written -- see runtime/Main.java.in for the one the harness uses.)
   //
   // λ□'s `fix` compiles to plain Java recursion, and the recursive call is
   // usually NOT in tail position (building a list, `map`, `foldr`, the deriv

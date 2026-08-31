@@ -31,12 +31,7 @@ public final class Prog {
     } };
   }
   // inductive c___Nat: erased; values use Data(tag, fields)
-  public static Object __main(){
+  public static Object body(){
     return ((Rt.Fn)(((Rt.Fn)(c___add())).apply(new Rt.Data(1, new Object[]{ new Rt.Data(0, new Object[]{  }) })))).apply(new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(0, new Object[]{  }) }) }) }));
-  }
-  public static void main(String[] args){
-    Rt.runMain(new Rt.Fn(){ public Object apply(Object ignored){
-      return __main();
-    } });
   }
 }

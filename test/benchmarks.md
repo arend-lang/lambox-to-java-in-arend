@@ -190,8 +190,12 @@ apart. A number from an hour ago is not evidence about a code change.
 So to compare encoding A against encoding B:
 
 1. Run the benchmark command with A.
-2. Change the ONE line that picks the encoding (`compileProgram` in
-   `lambox-to-java/src/ToJava.ard`, `targetLong` vs `targetLongKnotArray`).
+2. Change the generator to emit B and nothing else. (When this was written, that
+   was one line -- `targetLong` vs `targetLongKnotArray` in
+   `lambox-to-java/src/ToJava.ard`. Both are GONE: the `JavaTarget` record and
+   the second `fix` encoding were removed once the comparison below had settled
+   the question, so reproducing that particular A/B now means reintroducing the
+   encoding. The protocol is what generalizes, not those two names.)
 3. Run the same command again, immediately.
 4. Do it a second time in the OPPOSITE order (B then A). Drift is monotone over
    a session, so averaging the two orders cancels it; agreeing in SIGN across
@@ -204,8 +208,10 @@ A single pair, in one direction, cannot resolve anything below ~20%.
 
 ## Result: `fixLocalClass` vs `fixKnotArray` (2026-08-31)
 
-The two `fix` encodings of `ToJava.ard`'s `FixStyle`, measured by the protocol
-above. Every run was `check=expected`, `result=ok` -- the two encodings agree on
+The two `fix` encodings that `ToJava.ard`'s `FixStyle` used to select, measured
+by the protocol above. `FixStyle` and the mutable-`Fn[]` encoding have since been
+removed and only the local class remains; the reasoning it preserves is now in
+the `fix` clause of `compileExpr`. Every run was `check=expected`, `result=ok` -- the two encodings agree on
 every value, which is the first thing being tested.
 
     order 1 (local class 11:52, knot array 12:03)
