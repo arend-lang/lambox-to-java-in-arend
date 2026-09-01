@@ -10,24 +10,9 @@ public final class Prog {
       class FixFL {
         public Object f0(Object py0FL){
           final Rt.Data dLy0FL = ((Rt.Data)(py0FL));
-          Object rLy0FL;
-          switch (dLy0FL.tag) {
-            case 0: {
-              rLy0FL = new Rt.Data(0, new Object[]{  });
-              break;
-            }
-            case 1: {
-              final Object g0b1Ly0FL = dLy0FL.fields[0];
-              rLy0FL = new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FL){
-                return FixFL.this.f0(w0FL);
-              } })).apply(g0b1Ly0FL) }) });
-              break;
-            }
-            default: {
-              throw new RuntimeException("no matching branch");
-            }
-          }
-          return rLy0FL;
+          return ((dLy0FL.tag == 0) ? new Rt.Data(0, new Object[]{  }) : ((dLy0FL.tag == 1) ? new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FL){
+            return FixFL.this.f0(w0FL);
+          } })).apply(dLy0FL.fields[0]) }) }) : Rt.noBranch(dLy0FL, "Ly0FL")));
         }
       }
       final FixFL zFL = new FixFL();
@@ -45,25 +30,9 @@ public final class Prog {
             class FixFLLLL {
               public Object f0(Object py0FLLLL){
                 final Rt.Data dLy0FLLLL = ((Rt.Data)(py0FLLLL));
-                Object rLy0FLLLL;
-                switch (dLy0FLLLL.tag) {
-                  case 0: {
-                    rLy0FLLLL = new Rt.Data(0, new Object[]{  });
-                    break;
-                  }
-                  case 1: {
-                    final Object g0b1Ly0FLLLL = dLy0FLLLL.fields[0];
-                    final Object g1b1Ly0FLLLL = dLy0FLLLL.fields[1];
-                    rLy0FLLLL = new Rt.Data(1, new Object[]{ ((Rt.Fn)(pLL)).apply(g0b1Ly0FLLLL), ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FLLLL){
-                      return FixFLLLL.this.f0(w0FLLLL);
-                    } })).apply(g1b1Ly0FLLLL) });
-                    break;
-                  }
-                  default: {
-                    throw new RuntimeException("no matching branch");
-                  }
-                }
-                return rLy0FLLLL;
+                return ((dLy0FLLLL.tag == 0) ? new Rt.Data(0, new Object[]{  }) : ((dLy0FLLLL.tag == 1) ? new Rt.Data(1, new Object[]{ ((Rt.Fn)(pLL)).apply(dLy0FLLLL.fields[0]), ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FLLLL){
+                  return FixFLLLL.this.f0(w0FLLLL);
+                } })).apply(dLy0FLLLL.fields[1]) }) : Rt.noBranch(dLy0FLLLL, "Ly0FLLLL")));
               }
             }
             final FixFLLLL zFLLLL = new FixFLLLL();

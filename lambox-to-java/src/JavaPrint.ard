@@ -1,8 +1,6 @@
 -- Only `map`/`mkArray`: importing Data.Array wholesale would shadow String's
 -- `++` with the Array one.
 \import Data.Array (map, mkArray)
-\import Data.Bool
-\import Data.Maybe
 \import Data.String
 \import JavaAst
 \import StringUtil
@@ -20,13 +18,16 @@
 -- syntax-directed and decision-free is what makes that acceptable.
 --
 -- Termination follows `ToJava.ard`'s discipline: `printExpr`/`printStmt` recurse
--- over `Array` children INLINE via `xs i` / `(cs i).2`, never through a
+-- over `Array` children INLINE via `xs i` / `(ms i).3`, never through a
 -- `\case`-bound variable, and `Data.Array.map` is unusable inside the cycle (it
 -- hides the index behind a closure; verified). Outside it, `map` is fine.
 --
 -- LAYOUT is indentation only -- `ind` counts two-space levels. No line breaking
--- and no precedence handling: the fragment has no operators and casts are fully
--- parenthesized, so every expression prints as an atom.
+-- and NO PRECEDENCE HANDLING, which holds because every node that is not already
+-- an atom brackets itself: `jCast`, `jCond` and `jTagEq`. So a node may be placed
+-- anywhere an expression is allowed without the printer having to know where. A
+-- `jCond` chain prints on one line, broken only where an arm contains a
+-- `jClosure`, whose body is a block.
 --
 -- NOT ESCAPED: `jStringLit` is emitted verbatim between quotes. Every string the
 -- generator puts there is a node path, a mangled identifier or a fixed message;
@@ -71,38 +72,25 @@
   | jDataNew tag fs =>
     "new " ++ printType tData ++ "(" ++ natToStr tag ++ ", new " ++ printType tObject ++ "[]{ "
       ++ joinStr ", " (mkArray {String} {fs.len} (\lam i => printExpr ind (fs i))) ++ " })"
-  | jDataTag d => printExpr ind d ++ ".tag"
+  -- Parenthesized so that it is an atom like everything else, rather than
+  -- depending on `?:` binding looser than `==` -- which is true, but would make
+  -- this node's correctness depend on where the generator puts it.
+  | jTagEq d n => "(" ++ printExpr ind d ++ ".tag == " ++ natToStr n ++ ")"
   | jDataField d i => printExpr ind d ++ ".fields[" ++ natToStr i ++ "]"
+  -- Parenthesized, like `jCast`: `?:` binds looser than everything else the
+  -- fragment emits, so this is what keeps the printer precedence-free.
+  | jCond c a b =>
+    "(" ++ printExpr ind c ++ " ? " ++ printExpr ind a ++ " : " ++ printExpr ind b ++ ")"
   | jQualThis c => c ++ ".this"
   | jStringLit s => "\"" ++ s ++ "\""
   | jIntLit n => natToStr n
   | jLongLit i => intToStr i ++ "L"
 
 -- Every clause emits its own indentation and trailing newline, so a block is just
--- the concatenation of its statements. `jLocal`'s `Bool`/`Maybe` are matched by
--- NESTED patterns, not an inner `\case`, which would lose the structural link.
+-- the concatenation of its statements.
 \func printStmt (ind : Nat) (s : JStmt) : String \elim s
-  | jLocal true t nm nothing => indentStr ind ++ "final " ++ printType t ++ " " ++ nm ++ ";\n"
-  | jLocal false t nm nothing => indentStr ind ++ printType t ++ " " ++ nm ++ ";\n"
-  | jLocal true t nm (just e) =>
+  | jLocal t nm e =>
     indentStr ind ++ "final " ++ printType t ++ " " ++ nm ++ " = " ++ printExpr ind e ++ ";\n"
-  | jLocal false t nm (just e) =>
-    indentStr ind ++ printType t ++ " " ++ nm ++ " = " ++ printExpr ind e ++ ";\n"
-  | jAssign lhs rhs => indentStr ind ++ printExpr ind lhs ++ " = " ++ printExpr ind rhs ++ ";\n"
-  | jSwitch scrut cs dflt =>
-    \let | ind1 => suc ind
-         | ind2 => suc ind1
-         | cases => mkArray {String} {cs.len} (\lam i =>
-             indentStr ind1 ++ "case " ++ natToStr (cs i).1 ++ ": {\n"
-               ++ concatStr (mkArray {String} {((cs i).2).len} (\lam j => printStmt ind2 ((cs i).2 j)))
-               ++ indentStr ind2 ++ "break;\n"
-               ++ indentStr ind1 ++ "}\n")
-    \in indentStr ind ++ "switch (" ++ printExpr ind scrut ++ ") {\n"
-          ++ concatStr cases
-          ++ indentStr ind1 ++ "default: {\n"
-          ++ concatStr (mkArray {String} {dflt.len} (\lam j => printStmt ind2 (dflt j)))
-          ++ indentStr ind1 ++ "}\n"
-          ++ indentStr ind ++ "}\n"
   | jLocalClass c ms =>
     \let | ind1 => suc ind
          | ind2 => suc ind1

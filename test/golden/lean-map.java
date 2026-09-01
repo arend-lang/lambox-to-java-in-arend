@@ -17,22 +17,7 @@ public final class Prog {
           } })).apply(pVBLy0) }) });
         } };
         final Rt.Data dBBLy0 = ((Rt.Data)(py0));
-        Object rBBLy0;
-        switch (dBBLy0.tag) {
-          case 0: {
-            rBBLy0 = ((Rt.Fn)(lLy0)).apply(c__Unit__unit());
-            break;
-          }
-          case 1: {
-            final Object g0b1BBLy0 = dBBLy0.fields[0];
-            rBBLy0 = ((Rt.Fn)(lBLy0)).apply(g0b1BBLy0);
-            break;
-          }
-          default: {
-            throw new RuntimeException("no matching branch");
-          }
-        }
-        return rBBLy0;
+        return ((dBBLy0.tag == 0) ? ((Rt.Fn)(lLy0)).apply(c__Unit__unit()) : ((dBBLy0.tag == 1) ? ((Rt.Fn)(lBLy0)).apply(dBBLy0.fields[0]) : Rt.noBranch(dBBLy0, "BBLy0")));
       }
     }
     final Fix z = new Fix();
@@ -58,23 +43,7 @@ public final class Prog {
                 } };
               } };
               final Rt.Data dBBLLLLy0 = ((Rt.Data)(pLLLy0));
-              Object rBBLLLLy0;
-              switch (dBBLLLLy0.tag) {
-                case 0: {
-                  rBBLLLLy0 = ((Rt.Fn)(lLLLLy0)).apply(c__Unit__unit());
-                  break;
-                }
-                case 1: {
-                  final Object g0b1BBLLLLy0 = dBBLLLLy0.fields[0];
-                  final Object g1b1BBLLLLy0 = dBBLLLLy0.fields[1];
-                  rBBLLLLy0 = ((Rt.Fn)(((Rt.Fn)(lBLLLLy0)).apply(g0b1BBLLLLy0))).apply(g1b1BBLLLLy0);
-                  break;
-                }
-                default: {
-                  throw new RuntimeException("no matching branch");
-                }
-              }
-              return rBBLLLLy0;
+              return ((dBBLLLLy0.tag == 0) ? ((Rt.Fn)(lLLLLy0)).apply(c__Unit__unit()) : ((dBBLLLLy0.tag == 1) ? ((Rt.Fn)(((Rt.Fn)(lBLLLLy0)).apply(dBBLLLLy0.fields[0]))).apply(dBBLLLLy0.fields[1]) : Rt.noBranch(dBBLLLLy0, "BBLLLLy0")));
             } };
           } };
         } };

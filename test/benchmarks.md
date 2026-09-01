@@ -252,3 +252,144 @@ xfail (`example`) unchanged and unrelated. 46 of the 71 generated programs
 contain a local `Fix` class (178 of them, with 294 sibling references), and the
 eta-expansion branch for an unguarded fix body appeared in NONE of them, which is
 what makes it dead code in practice rather than in theory.
+
+## Result: `case` as a ternary chain vs as a `switch` (2026-08-31)
+
+The change that replaced `jSwitch` + a result local with `jCond` + `jTagEq`, and
+bound a branch's field binders to `d.fields[i]` instead of to locals. Every value
+was correct on every run of both sides.
+
+Measured by interleaving A/B on one pair of already-built trees rather than by
+running the protocol's five programs twice: the `before` side is a copy of the
+project with `JavaAst`/`JavaPrint`/`ToJava`/`JavaAxioms`/`Rt.java` restored from
+HEAD, so both sides are generated from the same `.ast` bytes in the same session.
+
+**The signal program, with the control.** Two interleaved rounds, best-of-3 per
+sample (control best-of-2):
+
+    program                switch   ternary   delta
+    matmul250 round 1       19.49     18.16    -6.8%
+    matmul250 round 2       19.49     18.15    -6.9%
+    matmul    round 1        1.62      1.41
+    matmul    round 2        1.48      1.41
+    ocaml matmul250 control 11.55     11.64    +0.8%   <- flat, so the machine held
+
+Both rounds agree to 0.01 s and the control moved 0.8%, so **-6.8% on matmul250
+is real**. That is the opposite sign to the two small Lean programs below.
+
+**The rest**, measured earlier the same way but WITHOUT a control -- three of the
+four finish under 2.7 s, which is why `lean-binarytrees` could not be explained.
+Columns are the MEDIAN of three samples, each sample itself a best-of-3
+(best-of-5 under 4 s); median rather than best-of because `lean-const-fold`
+spread 4.8-7.6 s and a best-of would quote it as -57%.
+
+    program           switch  ternary  delta   samples (switch vs ternary)
+    matmul              1.54     1.49   -3%    1.55/1.49/1.54 vs 1.49/1.49/1.45
+    lean-matmul         2.12     2.64   +25%   2.17/2.03/2.12 vs 2.62/2.66/2.64
+    lean-binarytrees    1.08     1.22   +13%   1.10/1.01/1.08 vs 1.22/1.21/1.22
+    lean-const-fold    11.18     7.28   -35%   11.1/11.2/11.2 vs 7.3/7.6/4.8
+
+`lean-deriv` was value-checked but not A/B'd: 40230090 in 7.8 s, against the
+12.1-14.8 s its `results.tsv` rows span. Different session, no control, so read
+it as agreeing in sign with `lean-const-fold` and not as a measurement.
+
+So the change is a WIN on the two programs big enough to measure well
+(`matmul250` -6.8% controlled, `lean-const-fold` -35%) and a loss on two small
+ones (`lean-matmul` +25%, `lean-binarytrees` +13%). The +25% has an identified
+cause, below; it is a property of one hot arm, not of the encoding.
+
+Non-runtime columns all improved: the committed goldens went 5082 -> 2098 lines
+(-59%), and Arend spent 35.9 s generating the four programs where it had spent
+75.6 s (-53%), the generator having less to build.
+
+**Where the +26% comes from, measured rather than guessed.** A branch that needs
+statements -- one that names an intermediate value -- becomes a thunk
+(`armExpr`). Counting executions by patching a `long[]` into the runtime and
+incrementing per thunk site:
+
+    lean-matmul       2 thunk sites, executed 145,010,450 and 2,197,000 times
+    lean-binarytrees  3 thunk sites, executed 5, 5 and 5,456 times
+    lean-const-fold  12 thunk sites, executed 2.6M total across 4 live sites
+
+So lean-matmul has one thunk in its innermost loop: an arm that must evaluate and
+name `Nat.beq(l, 0)` before matching on it. That is intrinsic to `case` being an
+expression, not an accident of this encoding -- Java has no block expression, so
+naming a value inside an arm costs an `Rt.Fn`. Its GC count rose 23 -> 33, which
+agrees.
+
+`lean-binarytrees`' +16% is NOT the thunk (5,456 executions) and NOT allocation
+(young GCs went 14 -> 12) and NOT the field-read change (26 reads -> 20). What is
+left is the tag chain replacing a jump table: matches have 1-4 arms (a few have
+8), so a `tableswitch` became 2-4 comparisons. Unproven, and at 1.1 s the program
+is warmup-dominated, so treat it as measured-but-unexplained.
+
+The fix for both, when it matters: lambda-lift a statementful arm into a
+`private static Object arm_<path>(<captured>)` and call it -- a static call
+allocating nothing, instead of a closure. That needs `JMethod` to grow
+parameters (it is deliberately zero-argument today) plus a free-variable analysis
+of the arm, so it is its own change. A cheaper partial one: compile an
+application of a `fix` sibling to a direct call, which removes both the
+forwarding closure and, at sites like matmul's, some of the naming pressure.
+
+### How the `before` side was rebuilt
+
+Worth writing down, because an A/B needs the OLD generator and the old sources
+were uncommitted-over rather than committed:
+
+    cp arend.yaml src/ runtime/ -> /tmp/before-project
+    for f in JavaAst JavaPrint ToJava JavaAxioms; do
+      git show HEAD:lambox-to-java/src/$f.ard > /tmp/before-project/src/$f.ard
+    done
+    git show HEAD:lambox-to-java/runtime/Rt.java > /tmp/before-project/runtime/Rt.java
+
+Then point `golden.py`'s `AREND_PROJECT` at it and reuse `golden.generate`, which
+dumps every selected program in ONE Arend run. `src/Imported/` comes along in the
+copy, so no peregrine is needed. Each side is built with ITS OWN `Rt.java` --
+`noBranch` exists only on the ternary side.
+
+### The variant not taken: `Rt.match(scrut, f0, f1, ..)`
+
+The alternative to a ternary chain is one runtime call per `case`, taking the
+scrutinee and every branch as a varargs `Fn...`:
+
+    return Rt.match(scrut,
+      new Rt.Fn(){ public Object apply(Object i){ <stmts0> return <e0>; } },
+      new Rt.Fn(){ public Object apply(Object i){ <stmts1> return <e1>; } });
+
+    // runtime
+    public static Object match(Object scrut, Fn... bs) {
+      Data d = (Data) scrut;
+      return d.tag < bs.length ? bs[d.tag].apply(BOX) : noBranch(d, "?");
+    }
+
+Varargs is what makes the "no AST change" claim true -- it is a `jCallStatic`
+with n+1 arguments, needing neither an array type nor an array-literal node (both
+were deleted in 881dfe6).
+
+Rejected on both counts.
+
+**Cost.** It allocates k closures AND the varargs array on EVERY evaluation of
+EVERY match, where the chain allocates only the selected arm's thunk, and only
+when that arm needs statements. In lean-matmul that is 2 of 21 arms; the other 19
+allocate nothing. Worse, the allocations are not eliminable: `bs[d.tag]` indexes
+by a value the JIT cannot fold, so escape analysis cannot scalar-replace the
+array. The chain's thunk sits at a monomorphic `new Fn(){..}.apply(BOX)` site,
+which HotSpot can and sometimes does scalar-replace -- lean-matmul's hot thunk is
+too big to inline, which is precisely why that one costs 25%.
+
+Order of magnitude, derived not measured: the chain's 0.52 s over 145M hot-thunk
+executions is ~3.5 ns per closure. `Rt.match` would pay several of those per
+inner-loop iteration instead of one, plus an array, so expect a multiple of the
+chain's +25% -- and it would pay them on `lean-const-fold` too, which the chain
+made 35% FASTER.
+
+**Verifiability.** `match` would be an ASSUMED runtime function -- the
+`JavaAxioms.ard` category, "data a proof takes as a HYPOTHESIS". That puts
+`case`, a core λ□ construct, in the assumed periphery, which is the opposite of
+the split JavaAst.ard exists to maintain. It also needs `bs[d.tag]`: a COMPUTED
+array index, the one thing the fragment deliberately excludes (`jDataField` takes
+a `Nat` so that no arithmetic is needed anywhere). `jCond`/`jTagEq` instead
+interpret `case` in the AST, and the thunk is not a new node or a new hypothesis
+at all -- it reuses `jClosure`/`jApply`, whose semantics the proof already needs
+for λ□ `lambda`/`app`, and `apply(closure(b), BOX) = b` is a beta step already in
+that semantics.

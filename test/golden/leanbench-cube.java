@@ -21,18 +21,7 @@ public final class Prog {
       return new Rt.Fn(){ public Object apply(Object pL){
         return new Rt.Fn(){ public Object apply(Object pLL){
           final Rt.Data dLLL = ((Rt.Data)(pLL));
-          Object rLLL;
-          switch (dLLL.tag) {
-            case 0: {
-              final Object g0b0LLL = dLLL.fields[0];
-              rLLL = g0b0LLL;
-              break;
-            }
-            default: {
-              throw new RuntimeException("no matching branch");
-            }
-          }
-          return rLLL;
+          return ((dLLL.tag == 0) ? dLLL.fields[0] : Rt.noBranch(dLLL, "LLL"));
         } };
       } };
     } };
@@ -59,18 +48,7 @@ public final class Prog {
     return new Rt.Fn(){ public Object apply(Object p){
       return new Rt.Fn(){ public Object apply(Object pL){
         final Rt.Data dLL = ((Rt.Data)(pL));
-        Object rLL;
-        switch (dLL.tag) {
-          case 0: {
-            final Object g0b0LL = dLL.fields[0];
-            rLL = g0b0LL;
-            break;
-          }
-          default: {
-            throw new RuntimeException("no matching branch");
-          }
-        }
-        return rLL;
+        return ((dLL.tag == 0) ? dLL.fields[0] : Rt.noBranch(dLL, "LL"));
       } };
     } };
   }
@@ -93,18 +71,7 @@ public final class Prog {
       return new Rt.Fn(){ public Object apply(Object pL){
         return new Rt.Fn(){ public Object apply(Object pLL){
           final Rt.Data dLLL = ((Rt.Data)(pLL));
-          Object rLLL;
-          switch (dLLL.tag) {
-            case 0: {
-              final Object g0b0LLL = dLLL.fields[0];
-              rLLL = g0b0LLL;
-              break;
-            }
-            default: {
-              throw new RuntimeException("no matching branch");
-            }
-          }
-          return rLLL;
+          return ((dLLL.tag == 0) ? dLLL.fields[0] : Rt.noBranch(dLLL, "LLL"));
         } };
       } };
     } };
@@ -116,18 +83,7 @@ public final class Prog {
         return new Rt.Fn(){ public Object apply(Object pLL){
           return new Rt.Fn(){ public Object apply(Object pLLL){
             final Rt.Data dLLLL = ((Rt.Data)(pLLL));
-            Object rLLLL;
-            switch (dLLLL.tag) {
-              case 0: {
-                final Object g0b0LLLL = dLLLL.fields[0];
-                rLLLL = g0b0LLLL;
-                break;
-              }
-              default: {
-                throw new RuntimeException("no matching branch");
-              }
-            }
-            return rLLLL;
+            return ((dLLLL.tag == 0) ? dLLLL.fields[0] : Rt.noBranch(dLLLL, "LLLL"));
           } };
         } };
       } };

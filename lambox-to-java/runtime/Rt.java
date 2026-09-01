@@ -142,6 +142,24 @@ public final class Rt {
       "ill-formed lambda-box: free variable \"" + name + "\" has no Java counterpart (node " + path + ")");
   }
 
+  // The last alternative of the ternary chain a λ□ `case` compiles to: reached
+  // when the scrutinee's tag matches no branch. Unreachable for a well-typed
+  // program, since a match is total over its inductive's constructors — this is
+  // the `default:` that the earlier `switch` encoding threw from, kept for the
+  // same reason. It cannot be dropped in favour of using the last branch as the
+  // final `else`: that would turn a malformed tag from a loud error into a
+  // silently wrong answer.
+  // Takes the scrutinee rather than its tag so that the generated code needs no
+  // node for reading a tag on its own: every other tag read is part of a `tag ==
+  // n` test.
+  public static Object noBranch(Object scrutinee, String path) {
+    String what = scrutinee instanceof Data
+      ? "constructor tag " + ((Data) scrutinee).tag
+      : "non-constructor value " + scrutinee;
+    throw new IllegalStateException(
+      "ill-formed lambda-box: " + what + " matches no branch (node " + path + ")");
+  }
+
   // --- Primitive integer ops -------------------------------------------------
   //
   // Realization of the arity-2 λ□ axioms `prim_add_int`, `prim_mul_int`,

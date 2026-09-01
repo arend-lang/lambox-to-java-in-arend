@@ -111,14 +111,21 @@
 -- The entry point callers use, so the table stays internal to this file.
 \func axiomImpl (name : String) : Maybe JExpr => lookupAxiom name javaAxioms
 
--- Two λ□ nodes have no Java value: a `bvar` whose index exceeds the enclosing
--- binders, and an `fvar`. Erasure output has neither, so these are unreachable
--- for well-formed input -- which is why they must not be a silent `null`, which
--- fails far away or propagates as a value. Each fails at once and names the
--- offending node (`path` is the generator's structural node id).
+-- Three situations have no λ□ value: a `bvar` whose index exceeds the enclosing
+-- binders, an `fvar`, and a `case` whose scrutinee matches no branch. Erasure
+-- output produces none of them, so these are unreachable for well-formed input --
+-- which is why they must not be a silent `null`, which fails far away or
+-- propagates as a value. Each fails at once and names the offending node (`path`
+-- is the generator's structural node id).
 
 \func rtUnbound (index : Nat) (path : String) : JExpr =>
   jCallStatic (runtimeQual ++ "unbound") (jIntLit index :: jStringLit path :: nil)
 
 \func rtFreeVar (name path : String) : JExpr =>
   jCallStatic (runtimeQual ++ "freeVar") (jStringLit name :: jStringLit path :: nil)
+
+-- The final alternative of the ternary chain a `case` becomes. It takes the
+-- SCRUTINEE, not its tag, which is what lets the AST drop a read-the-tag node and
+-- keep tag reads confined to `jTagEq`.
+\func rtNoBranch (scrut : JExpr) (path : String) : JExpr =>
+  jCallStatic (runtimeQual ++ "noBranch") (scrut :: jStringLit path :: nil)

@@ -66,7 +66,7 @@ JAVA_STACK = "-Xss1g"
 
 # The smoke set, and WHAT EACH PROGRAM IS HERE FOR. Chosen by set cover over the
 # features observable in generated Java (`class Fix`, a Fix class with more than
-# one method, `switch`, `.tag`, `.fields[`, `Rt.BOX`, `Long.valueOf`,
+# one method, `.tag ==`, `.fields[`, `Rt.BOX`, `Long.valueOf`,
 # `new Rt.Data`, a `final Object l..` from letIn, and each `Rt.<family>_` axiom
 # family), minimized by INPUT size, since that is what the cost is.
 #

@@ -3,12 +3,18 @@
 -- to, it is what a future semantics and correctness statement are given for, and
 -- it keeps spelling in one trusted place (`JavaPrint.ard`).
 --
--- SCOPE. Exactly what the generator emits: no operators, loops, conditionals,
--- generics, interfaces, `void`, array types or entry point, and no modifier but
--- `public static`. Every value has static type `Object` and is cast where needed,
--- so this is not Featherweight Java. Classes come in three shapes: the program
--- class, the anonymous one-method closures (`jClosure`), and the local classes
--- that tie a `fix` knot (`jLocalClass`).
+-- SCOPE. Exactly what the generator emits: no arithmetic, comparison, loops,
+-- `if`, generics, interfaces, `void`, array types or entry point, and no modifier
+-- but `public static`. The one operator is `?:` (`jCond`). Every value has static
+-- type `Object` and is cast where needed, so this is not Featherweight Java.
+-- Classes come in three shapes: the program class, the anonymous one-method
+-- closures (`jClosure`), and the local classes that tie a `fix` knot
+-- (`jLocalClass`).
+--
+-- STATEMENTS ARE FOR NAMING, NOT FOR CONTROL. `JStmt` has no branching
+-- construct: every λ□ node either denotes an expression or introduces a `jLocal`
+-- to name a value used more than once. So a statement list is a sequence of
+-- bindings ending in `jReturn`, and control flow lives entirely in `jCond`.
 --
 -- The runtime (`runtime/Rt.java`) is hand-written. Its CORE has dedicated nodes
 -- (RUNTIME ABI below), being what a correctness statement quantifies over; its
@@ -20,9 +26,9 @@
 -- NAMES: the `path`-derived names are what lets the generator's recursion pass
 -- Arend's termination checker without threading state.
 --
--- ARRAY-OF-\Sigma, NOT ARRAY-OF-RECORD in `jClosure`, `jSwitch` and
--- `jLocalClass`: a record with a `JStmt` field would join the JExpr/JStmt `\data`
--- cycle, which Arend rejects. (`LambdaBox.ard`'s `case` branches likewise.)
+-- ARRAY-OF-\Sigma, NOT ARRAY-OF-RECORD in `jClosure` and `jLocalClass`: a record
+-- with a `JStmt` field would join the JExpr/JStmt `\data` cycle, which Arend
+-- rejects. (`LambdaBox.ard`'s `case` branches likewise.)
 --
 -- Compare: Malfunction.v, the verified λ□ backend (its `Ident.t`/`Longident.t`
 -- split is `JIdent`/`JQIdent`, its `Mvar`/`Mglobal` split is `jVar`/`jStatic`);
@@ -31,8 +37,6 @@
 -- e.m(e*) | new C(e*) | (C)e` is the expression core); Jinja/µJava (folds
 -- statements into expressions, we do not).
 
-\import Data.Bool
-\import Data.Maybe
 \import Data.String
 
 -- Both `String`: a simple Java identifier, and a possibly dotted one (`Rt.Fn`,
@@ -86,11 +90,19 @@
   -- method is (parameter, body); see ARRAY-OF-\Sigma above.
   | jClosure JIdent (Array JStmt)
   | jDataNew Nat (Array JExpr)  -- `new Rt.Data(tag, new Object[]{ .. })`
-  | jDataTag JExpr  -- `d.tag`: the `switch` scrutinee a λ□ `case` becomes
+  -- `d.tag == n`: is this value the n-th constructor? One node rather than a tag
+  -- read and an `==`, so the fragment still has no comparison operator and this
+  -- denotes exactly λ□'s branch selection.
+  | jTagEq JExpr Nat
   -- `d.fields[i]`. `Nat`, not `JExpr`: λ□ has no computed field access, and
   -- folding `proj`'s `npars + idx` here is why the fragment needs no arithmetic.
   | jDataField JExpr Nat
   -- --- end RUNTIME ABI -----------------------------------------------------
+
+  -- `(c ? a : b)`. The fragment's ONE operator, and the whole of λ□ `case`: a
+  -- chain of these denotes the `iota` rule directly, where a `switch` denoted it
+  -- only together with a side condition about a variable being assigned.
+  | jCond JExpr JExpr JExpr
 
   -- `C.this` -- the enclosing instance of local class `C`, from inside a nested
   -- anonymous class: a `fix` sibling is referenced within a `jClosure` whose own
@@ -102,13 +114,10 @@
   | jLongLit Int  -- a `long` (`5L`) for λ□ `prim` ints; signed, so `Int`
 
 \data JStmt
-  -- `final Object l3 = e;` / `Object r3;`. Uninitialized is exactly the `case`
-  -- result variable, assigned in every branch.
-  | jLocal (isFinal : Bool) JType JIdent (Maybe JExpr)
-  | jAssign JExpr JExpr  -- only ever that `case` result variable
-  -- The printer emits each case's block and `break`, so there is no fallthrough.
-  -- Cases are \Sigma-shaped (see above), as in Malfunction's `Mswitch`.
-  | jSwitch JExpr (Array (\Sigma Nat (Array JStmt))) (Array JStmt)
+  -- `final Object l3 = e;`. Always final and always initialized: a statement
+  -- exists here only to NAME a value, so that the value expression can use it
+  -- more than once without recomputing it.
+  | jLocal JType JIdent JExpr
   -- A local class -- declared in a block, capturing effectively-final locals --
   -- whose k methods may call each other. This is how λ□ `fix` is encoded: the
   -- knot is tied by the declaration, so there are no mutable cells and no

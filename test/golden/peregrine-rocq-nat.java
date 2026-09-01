@@ -8,24 +8,9 @@ public final class Prog {
         public Object f0(Object py0FL){
           return new Rt.Fn(){ public Object apply(Object pLy0FL){
             final Rt.Data dLLy0FL = ((Rt.Data)(py0FL));
-            Object rLLy0FL;
-            switch (dLLy0FL.tag) {
-              case 0: {
-                rLLy0FL = pLy0FL;
-                break;
-              }
-              case 1: {
-                final Object g0b1LLy0FL = dLLy0FL.fields[0];
-                rLLy0FL = new Rt.Data(1, new Object[]{ ((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FL){
-                  return FixFL.this.f0(w0FL);
-                } })).apply(g0b1LLy0FL))).apply(pLy0FL) });
-                break;
-              }
-              default: {
-                throw new RuntimeException("no matching branch");
-              }
-            }
-            return rLLy0FL;
+            return ((dLLy0FL.tag == 0) ? pLy0FL : ((dLLy0FL.tag == 1) ? new Rt.Data(1, new Object[]{ ((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FL){
+              return FixFL.this.f0(w0FL);
+            } })).apply(dLLy0FL.fields[0]))).apply(pLy0FL) }) : Rt.noBranch(dLLy0FL, "LLy0FL")));
           } };
         }
       }

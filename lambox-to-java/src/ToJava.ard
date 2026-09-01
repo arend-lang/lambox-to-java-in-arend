@@ -3,7 +3,6 @@
 -- String's `++` with the Array one, so array append is imported under the
 -- alias `++A` (used in `appendStmts` and `compileClass` below).
 \import Data.Array (map, mkArray, Big, ++ \as \infixr 5 ++A)
-\import Data.Bool
 \import Data.Maybe
 \import Data.String
 \import JavaAst
@@ -18,10 +17,14 @@
 -- and printer, so callers still get a `String`.
 --
 -- Design: untyped -> `Object`; closures -> anonymous inner classes (no
--- invokedynamic); constructors -> `Data{int tag; Object[] fields}`; constants ->
--- zero-argument static methods; `fix` -> a local class with one method per
--- mutually defined function. The program's term becomes `body()`, and no entry
--- point is generated (`compileBody`).
+-- invokedynamic); constructors -> `Data{int tag; Object[] fields}`; `case` -> a
+-- chain of `?:` on the tag; constants -> zero-argument static methods; `fix` -> a
+-- local class with one method per mutually defined function. The program's term
+-- becomes `body()`, and no entry point is generated (`compileBody`).
+--
+-- EVERY λ□ NODE DENOTES AN EXPRESSION. `Out` carries a statement prelude too, but
+-- only to NAME values (a `letIn`, a `case` scrutinee, a `fix` instance): no
+-- statement branches, so nothing depends on a statement having run.
 --
 -- No configuration: `compileProgram` takes a class name and a program. Every
 -- option would be a case a semantics must interpret and a proof must discharge.
@@ -82,18 +85,52 @@
 \func mangleKername (k : Kername) : String =>
   "c_" ++ mangleModPath k.kerModPath ++ "__" ++ javaIdentPart k.kerName
 
--- Bind a branch's fields to fresh locals, starting at field index `fieldIx`
--- (= npars, to skip inductive parameters). Returns (bind-statements, extended env).
--- Recurses on the binder array only; never calls compileExpr.
--- Pushing left-to-right makes the LAST binder de Bruijn index 0 (matches iota_red).
-\func bindFields (dv : JExpr) (fieldIx : Nat) (bs : Array BinderName) (env : Array JExpr) (path : String)
-  : \Sigma (Array JStmt) (Array JExpr) \elim bs
-  | nil => (nil, env)
-  | _ :: bs =>
-    \let | nm => "g" ++ natToStr fieldIx ++ path
-         | st => jLocal true tObject nm (just (jDataField dv fieldIx))
-         | r  => bindFields dv (suc fieldIx) bs (jVar nm :: env) path
-    \in (st :: r.1, r.2)
+-- Push a branch's field binders onto the environment, starting at field index
+-- `fieldIx` (= npars, to skip inductive parameters).
+--
+-- A binder is bound to the EXPRESSION `d.fields[i]`, not to a local holding it.
+-- That is what makes a branch body statement-free, which is what lets `case` be
+-- an expression (see the `case` clause) -- a `final Object g0 = d.fields[0];`
+-- would force every branch with a binder through a thunk. Sound because the read
+-- is pure, and cheap because it is constant-size, so unlike substituting a value
+-- expression it cannot blow up however often the binder is used.
+--
+-- Recurses on the binder array only; never calls compileExpr. Pushing
+-- left-to-right makes the LAST binder de Bruijn index 0 (matches iota_red).
+\func pushFields (dv : JExpr) (fieldIx : Nat) (bs : Array BinderName) (env : Array JExpr)
+  : Array JExpr \elim bs
+  | nil => env
+  | _ :: bs => pushFields dv (suc fieldIx) bs (jDataField dv fieldIx :: env)
+
+-- ---------------------------------------------------------------------------
+-- The ternary-chain `case` encoding; see the `case` clause of `compileExpr`.
+-- ---------------------------------------------------------------------------
+
+-- One branch as an ARM of the chain. A branch body that needs statements -- a
+-- nested `letIn`, `case` or `fix` -- cannot be spliced in directly, because an
+-- arm must not run unless it is selected, and statements would have to be hoisted
+-- out of the conditional to run unconditionally. Such a branch becomes a THUNK
+-- applied at once: `((Rt.Fn)(new Rt.Fn(){ .. })).apply(Rt.BOX)`.
+--
+-- Only the SELECTED arm's thunk is allocated -- the allocation is inside the arm
+-- -- which is what this buys over passing all k branches to a runtime `match`.
+\func armExpr (stmts : Array JStmt) (val : JExpr) (path : String) : JExpr \elim stmts
+  | nil => val
+  | s :: ss =>
+    jApply (jClosure ("t" ++ path) (appendStmts (s :: ss) (jReturn val :: nil))) jBox
+
+-- The arms, as one nested conditional: `d.tag == 0 ? a0 : d.tag == 1 ? a1 : ..`.
+-- `tag` counts up with the position, since a branch's index IS its constructor's
+-- tag.
+--
+-- The chain ends in `Rt.noBranch`, not in the last arm. Using the last arm would
+-- drop k-1 comparisons for a total match -- which every match coming out of
+-- erasure is -- but it would also turn a scrutinee with an impossible tag from an
+-- immediate error into a silently wrong answer. It is the `default:` the earlier
+-- `switch` encoding threw from.
+\func condChain (scrut : JExpr) (tag : Nat) (arms : Array JExpr) (path : String) : JExpr \elim arms
+  | nil => rtNoBranch scrut path
+  | a :: arms => jCond (jTagEq scrut tag) a (condChain scrut (suc tag) arms path)
 
 -- ---------------------------------------------------------------------------
 -- The local-class `fix` encoding; see the `fix` clause of `compileExpr`.
@@ -157,36 +194,39 @@
     \let | ov => compileExpr env ("V" ++ path) value
          | lv => "l" ++ path
          | ob => compileExpr (jVar lv :: env) ("B" ++ path) body
-    \in (appendStmts ov.1 (jLocal true tObject lv (just ov.2) :: ob.1), ob.2)
+    \in (appendStmts ov.1 (jLocal tObject lv ov.2 :: ob.1), ob.2)
 
   -- construct: recurse inline over the Array of args.
   | construct _ cidx args =>
     \let | results => mkArray {Out} {args.len} (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
     \in (concatStmts results, jDataNew cidx (map (\lam r => r.2) results))
 
-  -- case: switch on the scrutinee's tag; each branch binds fields[npars ..] then
-  -- evaluates its body. We map inline over `brs i`, binding the body by pattern.
-  -- The switch has no value, so the branches assign to a result local `r<path>`,
-  -- which is this node's value expression.
+  -- case: a chain of `d.tag == i ? <branch i>` tests, which is what λ□'s own
+  -- `iota` rule says -- the branch selected by the scrutinee's constructor IS the
+  -- value. So this node has ONE statement, naming the scrutinee, and its value is
+  -- an expression; there is no result variable to assign, and hence no invariant
+  -- that every branch assigns it.
+  --
+  -- The scrutinee is named because the chain mentions it k+1 times (each tag test,
+  -- plus every field read reached through `pushFields`) and re-evaluating it would
+  -- be exponential in the nesting depth of matches. The `Rt.Data` cast is on that
+  -- one local, so nothing downstream casts again.
+  --
+  -- A match with NO branches (an erased `Empty`) still evaluates and casts the
+  -- scrutinee, as the `switch` encoding did, and its value is `Rt.noBranch`.
   | case _ npars scrut brs =>
     \let | os => compileExpr env ("S" ++ path) scrut
          | dv => "d" ++ path
-         | rv => "r" ++ path
+         | d  => jVar dv
          -- Recurse on the DIRECT projection `(brs i).2`, NOT a `\case`-bound
          -- variable: the checker tracks `(brs i).2 < t` (index into the sub-term
          -- `brs`, then project) but loses that through a `\case` pattern binding.
-         | cases => mkArray {\Sigma Nat (Array JStmt)} {brs.len} (\lam i =>
-             \let | bp  => "b" ++ natToStr i ++ path
-                  | bnd => bindFields (jVar dv) npars (brs i).1 env bp
-                  | ob  => compileExpr bnd.2 bp (brs i).2
-             \in (i, appendStmts bnd.1 (appendStmts ob.1 (jAssign (jVar rv) ob.2 :: nil))))
-    \in (appendStmts os.1
-           (jLocal true tData dv (just (jCast tData os.2)) ::
-            jLocal false tObject rv nothing ::
-            jSwitch (jDataTag (jVar dv)) cases
-              (jThrow (jNew (tClass "RuntimeException") (jStringLit "no matching branch" :: nil)) :: nil) ::
-            nil),
-         jVar rv)
+         | arms => mkArray {JExpr} {brs.len} (\lam i =>
+             \let | bp => "b" ++ natToStr i ++ path
+                  | ob => compileExpr (pushFields d npars (brs i).1 env) bp (brs i).2
+             \in armExpr ob.1 ob.2 bp)
+    \in (appendStmts os.1 (jLocal tData dv (jCast tData os.2) :: nil),
+         condChain d 0 arms path)
 
   -- proj: the AST has no arithmetic node, so `npars + idx` is added here.
   | proj pinfo scrut =>
@@ -209,7 +249,7 @@
              \let | m => compileFixMethod env' ("y" ++ natToStr j ++ path) (defs j).defBody
              \in (fixMethodName j, m.1, m.2))
     \in (jLocalClass cls methods ::
-         jLocal true (tClass cls) inst (just (jNew (tClass cls) nil)) ::
+         jLocal (tClass cls) inst (jNew (tClass cls) nil) ::
          nil,
          fixMethodRef (jVar inst) path idx)
 

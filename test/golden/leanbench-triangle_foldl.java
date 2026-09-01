@@ -28,23 +28,9 @@ public final class Prog {
           } };
           final Object lBBLLy0 = py0;
           final Rt.Data dBBBLLy0 = ((Rt.Data)(((Rt.Fn)(((Rt.Fn)(c__Nat__beq())).apply(lBBLLy0))).apply(Long.valueOf(0L))));
-          Object rBBBLLy0;
-          switch (dBBBLLy0.tag) {
-            case 0: {
-              rBBBLLy0 = ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pFb0BBBLLy0){
-                return ((Rt.Fn)(((Rt.Fn)(lBLLy0)).apply(pFb0BBBLLy0))).apply(pLy0);
-              } })).apply(((Rt.Fn)(((Rt.Fn)(c__Nat__sub())).apply(lBBLLy0))).apply(Long.valueOf(1L)));
-              break;
-            }
-            case 1: {
-              rBBBLLy0 = ((Rt.Fn)(lLLy0)).apply(pLy0);
-              break;
-            }
-            default: {
-              throw new RuntimeException("no matching branch");
-            }
-          }
-          return rBBBLLy0;
+          return ((dBBBLLy0.tag == 0) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pFb0BBBLLy0){
+            return ((Rt.Fn)(((Rt.Fn)(lBLLy0)).apply(pFb0BBBLLy0))).apply(pLy0);
+          } })).apply(((Rt.Fn)(((Rt.Fn)(c__Nat__sub())).apply(lBBLLy0))).apply(Long.valueOf(1L))) : ((dBBBLLy0.tag == 1) ? ((Rt.Fn)(lLLy0)).apply(pLy0) : Rt.noBranch(dBBBLLy0, "BBBLLy0")));
         } };
       }
     }
@@ -70,18 +56,7 @@ public final class Prog {
       return new Rt.Fn(){ public Object apply(Object pL){
         return new Rt.Fn(){ public Object apply(Object pLL){
           final Rt.Data dLLL = ((Rt.Data)(pLL));
-          Object rLLL;
-          switch (dLLL.tag) {
-            case 0: {
-              final Object g0b0LLL = dLLL.fields[0];
-              rLLL = g0b0LLL;
-              break;
-            }
-            default: {
-              throw new RuntimeException("no matching branch");
-            }
-          }
-          return rLLL;
+          return ((dLLL.tag == 0) ? dLLL.fields[0] : Rt.noBranch(dLLL, "LLL"));
         } };
       } };
     } };
@@ -110,23 +85,7 @@ public final class Prog {
                   } };
                 } };
                 final Rt.Data dBBLLLLLy0 = ((Rt.Data)(pLLLLy0));
-                Object rBBLLLLLy0;
-                switch (dBBLLLLLy0.tag) {
-                  case 0: {
-                    rBBLLLLLy0 = ((Rt.Fn)(lLLLLLy0)).apply(pLLLy0);
-                    break;
-                  }
-                  case 1: {
-                    final Object g0b1BBLLLLLy0 = dBBLLLLLy0.fields[0];
-                    final Object g1b1BBLLLLLy0 = dBBLLLLLy0.fields[1];
-                    rBBLLLLLy0 = ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(lBLLLLLy0)).apply(pLLLy0))).apply(g0b1BBLLLLLy0))).apply(g1b1BBLLLLLy0);
-                    break;
-                  }
-                  default: {
-                    throw new RuntimeException("no matching branch");
-                  }
-                }
-                return rBBLLLLLy0;
+                return ((dBBLLLLLy0.tag == 0) ? ((Rt.Fn)(lLLLLLy0)).apply(pLLLy0) : ((dBBLLLLLy0.tag == 1) ? ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(lBLLLLLy0)).apply(pLLLy0))).apply(dBBLLLLLy0.fields[0]))).apply(dBBLLLLLy0.fields[1]) : Rt.noBranch(dBBLLLLLy0, "BBLLLLLy0")));
               } };
             } };
           } };

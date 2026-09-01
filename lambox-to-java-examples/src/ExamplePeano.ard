@@ -10,7 +10,7 @@
 -- box / fvar / letIn / proj / prim (not needed for plain Nat arithmetic).
 --
 -- BinderName values are all `anon`: compileExpr never reads the textual name
--- of a lambda/fix/case binder, only its POSITION (see bindFields/pushFix), so
+-- of a lambda/fix/case binder, only its POSITION (see pushFields), so
 -- names carry no information for codegen and are left anonymous.
 -- =============================================================================
 
