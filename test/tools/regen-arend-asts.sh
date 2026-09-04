@@ -20,6 +20,9 @@
 # Cost: one Arend CLI run per program, ~40 s each (library loading dominates), so
 # this is a rare, manual step -- never part of a `run.py` run.
 #
+# `letchain` is the fourth such program (test/benchmarks.md: the `letIn` worst
+# case); it declares only the java backend, so it needs no attribute files.
+#
 # `matmul` additionally needs its two attribute files, which are extracted from
 # the same Arend module and are refreshed here as well. They are four fixed
 # declarations independent of the matrix size, which is why they are checked in
@@ -40,7 +43,8 @@ sexpr_def() {
     matmul200) printf 'ExamplePrint:matMulSexpr200\n' ;;
     matmul250) printf 'ExamplePrint:matMulSexpr250\n' ;;
     matmul300) printf 'ExamplePrint:matMulSexpr300\n' ;;
-    *)       die "no Arend source for program: $1 (regenerable: example peano matmul matmul200 matmul250 matmul300)" ;;
+    letchain) printf 'ExamplePrint:letChainSexpr\n' ;;
+    *)       die "no Arend source for program: $1 (regenerable: example peano matmul matmul200 matmul250 matmul300 letchain)" ;;
   esac
 }
 
@@ -63,5 +67,5 @@ else
   # matmul200/matmul300 are known to sexpr_def but have no program directory:
   # test/benchmarks.md records why 250 is the size that is kept, and either of
   # the others is one `mkdir` plus a `meta` away.
-  for prog in example peano matmul matmul250; do regen "$prog"; done
+  for prog in example peano matmul matmul250 letchain; do regen "$prog"; done
 fi

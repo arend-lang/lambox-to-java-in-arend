@@ -393,3 +393,80 @@ interpret `case` in the AST, and the thunk is not a new node or a new hypothesis
 at all -- it reuses `jClosure`/`jApply`, whose semantics the proof already needs
 for λ□ `lambda`/`app`, and `apply(closure(b), BOX) = b` is a beta step already in
 that semantics.
+
+## Result: `letIn` as an expression -- MEASURED AND REJECTED (2026-09-03)
+
+**NOT ADOPTED.** `ToJava.ard` still compiles `letIn` to a final-assignment
+statement; this section records what the alternative cost, so nobody has to
+measure it twice. The `letchain` program below was added for it and is KEPT, it
+being the only thing in the corpus that can see a change to the `letIn` clause at
+all.
+
+The alternative was compiling `let x = v in b` to its own λ□ equation, the
+beta-redex `((Rt.Fn)(new Rt.Fn(){ apply(x){ .. } })).apply(v)`, instead of to
+`final Object x = v;` plus hoisted body statements. Tried because it would make
+the `letIn` clause the `lambda` and `app` clauses composed rather than a third
+thing to give meaning to, and drop `jLocal` to two uses -- a real simplification,
+just not one worth ~5x on let-heavy loops.
+
+`matmul` and `matmul250` contain NO `letIn`: both sides generate byte-identical
+Java, which makes them a second null control here. They measured 21.5 vs 20.4-21.5
+(matmul250), i.e. the noise floor, as they must.
+
+    program           statement  expression  delta
+    letchain               1.20        5.80  +380%   the WORST CASE, built for this
+    lean-matmul            3.40        5.00   +40%   intrinsic cost, realistic
+    lean-const-fold        8.87        2.34   -74%   NOT intrinsic; see below
+    matmul250             21.54       21.45     0%   no letIn: identical bytecode
+    ocaml matmul250       13.30       19.67   +48%   MACHINE MOVED -- see below
+
+`letchain` was written for this measurement, because nothing in the corpus could
+make it: `matmul`/`matmul250` have no `letIn` at all and the Lean programs mix
+lets with everything else. It is a hot loop whose body is 20 chained lets and
+nothing else, 400,000,000 of them (see `corpora/handwritten/letchain/meta` and
+`ExampleLetChain.ard`). Confirmed by reversed-order crossover -- expression
+5.80/5.69/5.87 against statement 1.31/1.15/1.25 -- and it is free of the
+deoptimization confound below: 12 deopts (statement) vs 10 (expression), 0
+`unloaded` on either side.
+
+**So the ceiling is ~5x and the realistic figure is ~40%.** Read `letchain` as a
+bound on the damage, not a prediction of it; a copy-propagation pass would make
+that program much cheaper without helping real code.
+
+The machine was loaded (IntelliJ at 400% CPU, load average 8) and the control
+moved 48% between rounds, so cross-round numbers are worthless here. Both
+programs were therefore re-measured as a CROSSOVER with the order reversed
+(`after` first), on a quieter machine, which reproduced both signs:
+
+    lean-const-fold  expression 1.64/2.86/2.53   statement 9.38/8.64/8.59
+
+**The two effects are unrelated, and only one is a property of the encoding.**
+
+`lean-matmul` +40% is the intrinsic cost: 15 lets become 15 closure allocations
+plus interface dispatches, some in the inner loop. Its deopt counts are 14
+(statement) vs 15 (expression), so nothing else is going on. This is the number
+to believe about the encoding.
+
+`lean-const-fold` -74% is a JIT pathology being sidestepped, not a win for the
+encoding. JFR on the STATEMENT side:
+
+    jdk.Deoptimization   261,315 events   of which reason="unloaded"  261,303
+      all at Prog$4Fix$1$1.apply(Object), line 117, bci 33, instruction "new"
+
+versus 11 events (0 unloaded) on the expression side. Line 117 is
+`final Object lBBLLVLy0 = new Rt.Fn(){ .. }` -- a let bound to a closure. One
+large method accumulates many `new` sites for anonymous classes that load
+lazily, and a single unloaded-class trap deoptimizes the WHOLE method, over and
+over; making each let body its own small `apply` confines each trap to a tiny
+method. Method sizes (largest 516 bytecodes, 9 over FreqInlineSize, both sides),
+GC (18 young collections, ~650 ms, 810 M peak, both sides) and allocation-site
+counts (the expression side has MORE: 12 thunks + 36 let-closures vs 12 + 0) all
+rule out the obvious explanations.
+
+The storm is program-specific, not general: `lean-deriv` on the statement
+encoding has 12 deopts and 0 unloaded, `lean-matmul` 14 and 0.
+
+So: **as a performance change this is a loss** -- +40% where lets are hot, 0
+where there are none, and its one big win is available WITHOUT it by addressing
+the deoptimization storm directly. That storm is worth ~4x on `lean-const-fold`
+and is present on main today, which makes it the more valuable thing to chase.

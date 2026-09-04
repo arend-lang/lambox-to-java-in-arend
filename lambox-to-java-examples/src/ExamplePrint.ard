@@ -1,5 +1,7 @@
+\import Data.String  -- the `"Prog"` class-name literal the `*Java` printers pass
 \import Debug
 \import Example (testProgram)
+\import ExampleLetChain (letChainProgram)
 \import ExampleMatMul (matMulAttrsC, matMulAttrsOCaml, matMulProgram, matMulProgramOf)
 \import ExamplePeano (addProgram)
 \import Serialize
@@ -39,3 +41,8 @@
 \func matMulSexpr300 => putStrLn (LambdaBoxToSrting (matMulProgramOf 300))
 \func matMulAttrsCText => putStrLn (AttributesToString matMulAttrsC)
 \func matMulAttrsOCamlText => putStrLn (AttributesToString matMulAttrsOCaml)
+
+-- The `letIn` worst case (corpus program `letchain`). Java only, so no
+-- attribute files; see ExampleLetChain.ard.
+\func letChainJava => putStrLn (compileProgram "Prog" letChainProgram)
+\func letChainSexpr => putStrLn (LambdaBoxToSrting letChainProgram)
