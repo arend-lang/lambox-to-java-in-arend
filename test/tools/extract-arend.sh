@@ -12,14 +12,58 @@
 #
 # The CLI is narrowed to one definition and runs WITHOUT `--serialize`, and the
 # project's binary cache dir is cleared first, so a run always typechecks the
-# current sources. That is a correctness decision that costs nothing, measured on
-# `ExamplePrint:peanoJava`: 38.1 s with a warm .arc cache and `--serialize`,
-# 37.2 s warm without it, 33.5-39.6 s with no .arc at all -- all within noise,
-# because the time is JVM startup plus loading arend-lib from ~/.arend/libs,
-# which this cache does not cover. What the cache did buy was a class of silent
-# bug: a stale .arc of a dependency makes the CLI generate code from sources that
-# are no longer there (it has already produced two wrong conclusions), and a
-# stale .arc of the PRINT module suppresses the `putStrLn` we harvest outright.
+# current sources. That correctness decision COSTS NOTHING, and the reason is
+# worth knowing, because "turn the cache on" is the first idea anyone has about
+# the ~18 s an invocation takes. Measured on `Imported.Peano:progJava`:
+#
+#   cold, no .arc                    18.9 s
+#   warm .arc (compiler modules)     18.8 s   <- the cache saves NOTHING
+#   warm, repeated                   17.9 / 17.7 / 17.5 s
+#
+# Where the time actually goes, from the CLI's own [INFO] lines and a JFR profile
+# of the CLI itself: JVM start 0.1 s, `Loaded arend-lib` 0.14 s, and typechecking
+# the target 0.02 s. The other ~18 s is ANTLR (`ParserATNSimulator`) PARSING
+# arend-lib's sources. A `.arc` skips TYPECHECKING, not PARSING, which is exactly
+# why enabling it changes nothing.
+#
+# Two measurements pin that down. Deleting arend-lib's `src/` (binaries only)
+# takes the same run to 1.7 s -- and fails name resolution, so it is a proof of
+# cause, not a fix. And the cost is a CLIFF, not a slope, measured with a
+# one-line project importing exactly one module:
+#
+#   \import Paths          1 module loaded    1.7 s
+#   \import Data.Maybe     2 modules          1.6 s
+#   \import Logic        156 modules         17.0 s
+#   \import Meta         156 modules         16.4 s
+#   \import Data.Bool    156 modules         16.1 s
+#   \import Data.String  157 modules         17.5 s
+#   \import Data.Array   156 modules         19.3 s
+#
+# `Paths.ard` imports nothing and `Data.Maybe` imports only `Paths`; everything
+# else reaches arend-lib's meta/extension modules (`Logic.ard` imports `Meta`,
+# `Algebra.Meta`, `Function.Meta`, ...) and then 156 modules load. So this cannot
+# be trimmed by dropping an import: String, Array and Bool are all on the far
+# side of the cliff and the generator needs all three.
+#
+# Worth noting for anyone who wants to attack it upstream (this machine builds
+# the Arend CLI itself): the SOURCE-level import closure of `Data.Bool` is 12
+# modules and of `Set` is 13, yet 156 load either way -- an order of magnitude
+# more than the import graph asks for. Whether that is necessary or an eager
+# loading policy is an Arend question, not ours, but it is where a 16 s
+# per-invocation win would come from.
+#
+# This project's own 69 generated `src/Imported/*.ard` (19 MB) cost nothing at
+# all, since unreachable modules are never parsed.
+#
+# So the fixed cost is per-INVOCATION and irreducible from here; the lever is to
+# invoke Arend ONCE for many programs, which is what test/golden.py does (see its
+# docstring) and what run.py does not.
+#
+# What clearing the cache buys is a class of silent bug: a stale .arc of a
+# dependency makes the CLI generate code from sources that are no longer there
+# (it has already produced two wrong conclusions), and a stale .arc of the PRINT
+# module suppresses the `putStrLn` we harvest outright -- confirmed again here,
+# a `--serialize` run followed by a second run harvested 0 lines.
 #
 # The project's `bin` dir is gitignored build output, so clearing it is safe;
 # the arend-lib cache in ~/.arend is never touched.
@@ -55,19 +99,28 @@ mkdir -p "$WORK_DIR"
 log=$(mktemp "$WORK_DIR/extract-XXXXXX.log")
 trap 'rm -f "$log"' EXIT
 
-# No cache may satisfy any module of this run: a stale one of a DEPENDENCY hides
-# a source change, and a stale one of the target's own module skips the
-# `putStrLn` side effect we harvest. When the target lives in the examples
-# project, lambox-to-java's cache is a dependency of it too, so both are cleared.
-rm -rf "$project/bin"
-[ "$project" = "$AREND_PROJECT" ] || rm -rf "$AREND_PROJECT/bin"
+# In daemon mode (AREND_DAEMON=1, see lib.sh) the library positional must be
+# omitted -- a daemon-served command reports `[ERROR] Module not found:
+# arend.yaml` for it, which the error check below would read as a failure -- and
+# the cache must not be cleared, the daemon owning that state.
+if [ "$AREND_DAEMON" = 1 ]; then
+  arend_args=("${extra_l[@]}" "$target")
+else
+  # No cache may satisfy any module of this run: a stale one of a DEPENDENCY hides
+  # a source change, and a stale one of the target's own module skips the
+  # `putStrLn` side effect we harvest. When the target lives in the examples
+  # project, lambox-to-java's cache is a dependency of it too, so both are cleared.
+  rm -rf "$project/bin"
+  [ "$project" = "$AREND_PROJECT" ] || rm -rf "$AREND_PROJECT/bin"
+  arend_args=("${extra_l[@]}" arend.yaml "$target")
+fi
 
 start=$(date +%s%N)
 # The exit status is not a reliable success signal: the CLI also returns 1 when
 # it merely failed to load some unrelated binary cache. The `--- Done ---`
 # marker and the absence of [ERROR] lines are.
-info "+ (cd $project && $JAVA $JAVA_STACK -jar $AREND_JAR ${extra_l[*]} arend.yaml $target)"
-(cd "$project" && "$JAVA" "$JAVA_STACK" -jar "$AREND_JAR" "${extra_l[@]}" arend.yaml "$target") >"$log" 2>&1 || true
+info "+ (cd $project && $JAVA $JAVA_STACK -jar $AREND_JAR ${arend_args[*]})"
+(cd "$project" && "$JAVA" "$JAVA_STACK" -jar "$AREND_JAR" "${arend_args[@]}") >"$log" 2>&1 || true
 info "extract $target took $(( ($(date +%s%N) - start) / 1000000 ))ms"
 
 if grep -q '^\[ERROR\]' "$log"; then

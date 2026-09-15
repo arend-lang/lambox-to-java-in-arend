@@ -103,12 +103,51 @@ the same computation with no primitives and no attributes, so a break in the
 axiom machinery shows up as one of the two going red rather than both.
 Everything else belongs to `--all` before a commit.
 
+## Optional: the Arend CLI daemon
+
+Both `golden.py` and `run.py` work with or without a daemon. Without one,
+nothing changes: every Arend invocation pays ~18 s to parse arend-lib (see
+`tools/extract-arend.sh`). With one, that is paid once at startup.
+
+    test/tools/daemon.sh start        # ~30 s, then it idles
+    AREND_DAEMON=1 test/golden.py
+    AREND_DAEMON=1 test/run.py peano letchain
+    test/tools/daemon.sh stop         # also: status
+
+Measured on this machine, same jar both ways:
+
+    golden.py (smoke, 4 programs)     27-33 s  ->   8-15 s
+    run.py peano letchain                61 s  ->     10 s
+    golden.py --set cover                112 s  ->    105 s   <- no gain
+
+The pattern: the daemon removes a fixed per-invocation cost and nothing else.
+That is most of the runtime for small programs and for `run.py`, which pays it
+once per program; it is noise for `--set cover`, whose time is `lean-deriv`
+actually being compiled. So reach for it when iterating, not to make a big sweep
+cheap.
+
+**It needs a CLI that has a daemon**, which 1.12 as released does not; `start`
+exits 3 (skip-no-tool) if the jar has no `-d`. Three consequences of the daemon
+are handled for you, and are worth knowing because they all bit us first:
+
+* `start` clears `src/Imported` — bootstrap typechecks the whole library, and
+  each generated module typechecks by COMPILING its program, which overflows the
+  stack at 69 of them. The gen stage rewrites them anyway.
+* `start` exports `-Xss1g` to the daemon's child JVM, which is spawned with no
+  options of its own.
+* a definition the daemon considers unchanged is not re-typechecked, and the
+  text this harness harvests is a side effect of typechecking it. So the
+  generated module gets a `--stamp` (`tools/ast-to-arend`) and `golden.py`
+  stamps its dump definitions' NAMES. Stamping a comment is not enough: the
+  file changes, the definition does not.
+
 ## Layout
 
     run.py         the driver: the matrix, the timing, the statuses, the table
     golden.py      the fast check: generated Java vs golden/, one Arend run
     golden/        committed expected output, one .java per program
     lib.sh         tool paths (hard-coded) + require_tool + run_cmd helpers
+                   and AREND_DAEMON, the one daemon switch
     stages/        one script per backend: java.sh, ocaml.sh, c.sh, each
                    taking `gen|build|run` as its first argument
     corpora/       one script per corpus, each printing TSV rows:
@@ -215,9 +254,24 @@ of the whole of it. The value itself is always in
 * **The OCaml `lean` runtime bundle can only print a `Nat`** (its driver is
   `print_endline (Z.to_string Bench.main)`), so a program returning `Unit` or a
   list declares `java` only.
-* **No artifact caching**: every run regenerates from the `.ast`; java
-  generation costs 20-60 s per program because an Arend CLI start loads
-  arend-lib.
+* **No artifact caching**: every run regenerates from the `.ast`, and java
+  generation costs ~20 s per program. Almost all of that is a FIXED
+  per-invocation cost, and it is not what it looks like: JVM start is 0.1 s,
+  `Loaded arend-lib` 0.14 s and typechecking the target 0.02 s, while ~18 s is
+  ANTLR parsing arend-lib's sources. Arend's `.arc` binary cache does not help,
+  because it skips typechecking and not parsing — measured, 18.9 s cold vs
+  18.8 s warm. Turning it on is not merely useless but harmful here: a cached
+  print module is not re-typechecked, so the `putStrLn` this harness harvests
+  never runs (measured, 0 lines out), which is why `tools/extract-arend.sh`
+  clears `bin/` on purpose. Its header has the full numbers, the per-import
+  cliff, and where an upstream win would come from.
+* **Gen is one Arend invocation per program**, so `run.py --all` pays that ~18 s
+  sixty-eight times — about 20 minutes of pure parsing. Batching it is the one
+  big lever, and `golden.py` shows it works (4 programs in 30 s against ~74 s
+  for four separate invocations), but it is not a flag anyone forgot: it needs
+  `golden.py`'s one-module-many-programs `dump_module` trick generalized to
+  write files per program, because today each program gets its own
+  `Imported/<Module>.ard` and its own CLI run.
 * **Serial execution**: timings are ball-park and can come from a dirty tree
   (only the timestamp identifies a `results.tsv` row).
 * **`peregrine eval`** (Peregrine's own evaluator) is not a backend of the

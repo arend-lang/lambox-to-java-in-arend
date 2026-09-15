@@ -38,6 +38,22 @@ AREND_PROJECT="${AREND_PROJECT:-$ROOT/lambox-to-java}"
 # (the repo root, for lambox-to-java; the default library root, for
 # arend-lib -- -L does not add to the default root, it replaces it, so both
 # are needed).
+# --- Arend CLI daemon (opt-in) -------------------------------------------
+# AREND_DAEMON=1 routes every Arend invocation to a long-lived daemon holding a
+# warm library, which is what the ~18 s per-invocation cost buys back (see
+# tools/extract-arend.sh for where that cost actually goes). Start one with
+# `tools/daemon.sh start`; everything then works with or without it.
+#
+# Requires a CLI that HAS a daemon: it is not in 1.12 as released. Three things
+# the daemon changes, each handled where it bites:
+#
+#   * the library positional must be omitted   -> tools/extract-arend.sh
+#   * `bin` must not be cleared under it       -> tools/extract-arend.sh
+#   * a definition it thinks is unchanged is not re-typechecked, so the
+#     `putStrLn` this harness harvests never runs -> the `--stamp` footer in
+#     tools/ast-to-arend, and stamped definition names in golden.py
+AREND_DAEMON="${AREND_DAEMON:-0}"
+
 AREND_EXAMPLES_PROJECT="$ROOT/lambox-to-java-examples"
 AREND_LIBDIR="$HOME/.arend/libs"
 JAVA="$HOME/.jdks/openjdk-26.0.1/bin/java"

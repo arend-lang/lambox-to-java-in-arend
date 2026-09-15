@@ -578,8 +578,20 @@ FOOTER = """\
 \\func progJava => putStrLn (compileProgram "Prog" program)
 """
 
+# `--stamp S` variant. An Arend CLI daemon re-typechecks a definition only when
+# that DEFINITION changed, and the text this harness harvests is a side effect of
+# typechecking `progJava` -- so re-importing a program byte-identically makes the
+# daemon skip it and print nothing. Mentioning a uniquely named empty string
+# changes `progJava`'s body while leaving its output identical. Stamping a
+# COMMENT does not work: the file changes, the definition does not.
+STAMPED_FOOTER = """\
+\\func s{stamp} : String => ""
 
-def emit_builder(decls, main, source):
+\\func progJava => putStrLn (s{stamp} ++ compileProgram "Prog" program)
+"""
+
+
+def emit_builder(decls, main, source, stamp=None):
     return '\n'.join([
         HEADER.format(source=source),
         IMPORTS,
@@ -591,7 +603,7 @@ def emit_builder(decls, main, source):
         '',
         '\\func program : LBProgram => (progDecls, progTerm)',
         '',
-        FOOTER,
+        FOOTER if stamp is None else STAMPED_FOOTER.format(stamp=stamp),
     ])
 
 
@@ -611,6 +623,8 @@ def main_():
     ap.add_argument('--name', default='progText',
                     help="definition name in --mode=literal (default: progText)")
     ap.add_argument('-o', '--output', help="write here instead of stdout")
+    ap.add_argument('--stamp', help="make progJava a fresh definition (daemon mode; "
+                                    "see STAMPED_FOOTER)")
     args = ap.parse_args()
 
     source = args.file or '<stdin>'
@@ -620,7 +634,7 @@ def main_():
         if args.mode == 'literal':
             out = emit_literal(text.strip(), source, args.name)
         else:
-            out = emit_builder(*program(parse(text)), source=source)
+            out = emit_builder(*program(parse(text)), source=source, stamp=args.stamp)
     except Unsupported as exc:
         sys.stderr.write("ast-to-arend: %s: unsupported: %s\n" % (source, exc))
         return 2

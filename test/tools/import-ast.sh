@@ -53,5 +53,10 @@ trap 'rm -f "$boxed"' EXIT
 
 # On unsupported or non-block-form input the importer exits non-zero with a
 # message on stderr; `set -e` then stops the whole stage, which is what we want.
-"$PYTHON" "$AST_TO_AREND" "$@" -o "$out" "$boxed"
+# In daemon mode `progJava` must be a FRESH definition each import, or the daemon
+# skips it and prints nothing; `--stamp` does that (see ast-to-arend). Off by
+# default, so the normal path keeps writing deterministic modules.
+stamp=()
+[ "$AREND_DAEMON" = 1 ] && stamp=(--stamp "$(date +%s%N)")
+"$PYTHON" "$AST_TO_AREND" "${stamp[@]}" "$@" -o "$out" "$boxed"
 info "boxed and imported $ast -> Imported.$module ($(wc -l <"$out") lines)"
