@@ -4,19 +4,19 @@ public final class Prog {
   }
   public static Object c_Nat_Init_Corelib__add(){
     return new Rt.Fn(){ public Object apply(Object p){
-      class FixFL {
-        public Object f0(Object py0FL){
-          return new Rt.Fn(){ public Object apply(Object pLy0FL){
-            final Rt.Data dLLy0FL = ((Rt.Data)(py0FL));
-            return ((dLLy0FL.tag == 0) ? pLy0FL : ((dLLy0FL.tag == 1) ? new Rt.Data(1, new Object[]{ ((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FL){
-              return FixFL.this.f0(w0FL);
-            } })).apply(dLLy0FL.fields[0]))).apply(pLy0FL) }) : Rt.noBranch(dLLy0FL, "LLy0FL")));
+      class CFL {
+        public Object f0(Object py0_FL){
+          return new Rt.Fn(){ public Object apply(Object pLy0_FL){
+            final Rt.Data dLLy0_FL = ((Rt.Data)(py0_FL));
+            return ((dLLy0_FL.tag == 0) ? pLy0_FL : ((dLLy0_FL.tag == 1) ? new Rt.Data(1, new Object[]{ ((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_FL){
+              return CFL.this.f0(pw0_FL);
+            } })).apply(dLLy0_FL.fields[0]))).apply(pLy0_FL) }) : Rt.noBranch(dLLy0_FL, "LLy0_FL")));
           } };
         }
       }
-      final FixFL zFL = new FixFL();
-      return ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FL){
-        return zFL.f0(w0FL);
+      final CFL zFL = new CFL();
+      return ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_FL){
+        return zFL.f0(pw0_FL);
       } })).apply(p);
     } };
   }

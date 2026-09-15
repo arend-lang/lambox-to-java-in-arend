@@ -2,6 +2,7 @@
 \import Data.Maybe
 \import Data.String
 \import JavaAst
+\import NodePath
 \import Set
 \import StringUtil
 
@@ -115,17 +116,18 @@
 -- binders, an `fvar`, and a `case` whose scrutinee matches no branch. Erasure
 -- output produces none of them, so these are unreachable for well-formed input --
 -- which is why they must not be a silent `null`, which fails far away or
--- propagates as a value. Each fails at once and names the offending node (`path`
--- is the generator's structural node id).
+-- propagates as a value. Each fails at once and names the offending node: the id
+-- is the node's `Path` (NodePath.ard), rendered HERE rather than passed in as
+-- text, so a diagnostic cannot drift from the names that same path produces.
 
-\func rtUnbound (index : Nat) (path : String) : JExpr =>
-  jCallStatic (runtimeQual ++ "unbound") (jIntLit index :: jStringLit path :: nil)
+\func rtUnbound (index : Nat) (path : Path) : JExpr =>
+  jCallStatic (runtimeQual ++ "unbound") (jIntLit index :: jStringLit (renderPath path) :: nil)
 
-\func rtFreeVar (name path : String) : JExpr =>
-  jCallStatic (runtimeQual ++ "freeVar") (jStringLit name :: jStringLit path :: nil)
+\func rtFreeVar (name : String) (path : Path) : JExpr =>
+  jCallStatic (runtimeQual ++ "freeVar") (jStringLit name :: jStringLit (renderPath path) :: nil)
 
 -- The final alternative of the ternary chain a `case` becomes. It takes the
 -- SCRUTINEE, not its tag, which is what lets the AST drop a read-the-tag node and
 -- keep tag reads confined to `jTagEq`.
-\func rtNoBranch (scrut : JExpr) (path : String) : JExpr =>
-  jCallStatic (runtimeQual ++ "noBranch") (scrut :: jStringLit path :: nil)
+\func rtNoBranch (scrut : JExpr) (path : Path) : JExpr =>
+  jCallStatic (runtimeQual ++ "noBranch") (scrut :: jStringLit (renderPath path) :: nil)

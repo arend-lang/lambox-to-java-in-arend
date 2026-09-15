@@ -1,18 +1,18 @@
 public final class Prog {
   public static Object c___add(){
-    class Fix {
-      public Object f0(Object py0){
-        return new Rt.Fn(){ public Object apply(Object pLy0){
-          final Rt.Data dLLy0 = ((Rt.Data)(py0));
-          return ((dLLy0.tag == 0) ? pLy0 : ((dLLy0.tag == 1) ? new Rt.Data(1, new Object[]{ ((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0){
-            return Fix.this.f0(w0);
-          } })).apply(dLLy0.fields[0]))).apply(pLy0) }) : Rt.noBranch(dLLy0, "LLy0")));
+    class C {
+      public Object f0(Object py0_){
+        return new Rt.Fn(){ public Object apply(Object pLy0_){
+          final Rt.Data dLLy0_ = ((Rt.Data)(py0_));
+          return ((dLLy0_.tag == 0) ? pLy0_ : ((dLLy0_.tag == 1) ? new Rt.Data(1, new Object[]{ ((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_){
+            return C.this.f0(pw0_);
+          } })).apply(dLLy0_.fields[0]))).apply(pLy0_) }) : Rt.noBranch(dLLy0_, "LLy0_")));
         } };
       }
     }
-    final Fix z = new Fix();
-    return new Rt.Fn(){ public Object apply(Object w0){
-      return z.f0(w0);
+    final C z = new C();
+    return new Rt.Fn(){ public Object apply(Object pw0_){
+      return z.f0(pw0_);
     } };
   }
   // inductive c___Nat: erased; values use Data(tag, fields)

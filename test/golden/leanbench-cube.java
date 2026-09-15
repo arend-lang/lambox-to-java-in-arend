@@ -36,9 +36,9 @@ public final class Prog {
   public static Object c___instPowNat(){
     return new Rt.Fn(){ public Object apply(Object p){
       return new Rt.Fn(){ public Object apply(Object pL){
-        return new Rt.Data(0, new Object[]{ new Rt.Fn(){ public Object apply(Object pc0LL){
-          return new Rt.Fn(){ public Object apply(Object pLc0LL){
-            return ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__NatPow__pow())).apply(Rt.BOX))).apply(pL))).apply(pc0LL))).apply(pLc0LL);
+        return new Rt.Data(0, new Object[]{ new Rt.Fn(){ public Object apply(Object pc0_LL){
+          return new Rt.Fn(){ public Object apply(Object pLc0_LL){
+            return ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__NatPow__pow())).apply(Rt.BOX))).apply(pL))).apply(pc0_LL))).apply(pLc0_LL);
           } };
         } } });
       } };
@@ -57,9 +57,9 @@ public final class Prog {
     return new Rt.Fn(){ public Object apply(Object p){
       return new Rt.Fn(){ public Object apply(Object pL){
         return new Rt.Fn(){ public Object apply(Object pLL){
-          return new Rt.Data(0, new Object[]{ new Rt.Fn(){ public Object apply(Object pc0LLL){
-            return new Rt.Fn(){ public Object apply(Object pLc0LLL){
-              return ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__Pow__pow())).apply(Rt.BOX))).apply(Rt.BOX))).apply(pLL))).apply(pc0LLL))).apply(pLc0LLL);
+          return new Rt.Data(0, new Object[]{ new Rt.Fn(){ public Object apply(Object pc0_LLL){
+            return new Rt.Fn(){ public Object apply(Object pLc0_LLL){
+              return ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__Pow__pow())).apply(Rt.BOX))).apply(Rt.BOX))).apply(pLL))).apply(pc0_LLL))).apply(pLc0_LLL);
             } };
           } } });
         } };

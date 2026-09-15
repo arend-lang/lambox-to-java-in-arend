@@ -6,52 +6,52 @@ public final class Prog {
     return new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(0, new Object[]{  }) }), new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(0, new Object[]{  }) }) }) }), new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ new Rt.Data(0, new Object[]{  }) }) }) }) }) }), new Rt.Data(0, new Object[]{  }) }) }) });
   }
   public static Object c___double(){
-    class Fix {
-      public Object f0(Object py0){
-        final Object lLy0 = new Rt.Fn(){ public Object apply(Object pVLy0){
+    class C {
+      public Object f0(Object py0_){
+        final Object lLy0_ = new Rt.Fn(){ public Object apply(Object pVLy0_){
           return new Rt.Data(0, new Object[]{  });
         } };
-        final Object lBLy0 = new Rt.Fn(){ public Object apply(Object pVBLy0){
-          return new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0){
-            return Fix.this.f0(w0);
-          } })).apply(pVBLy0) }) });
+        final Object lBLy0_ = new Rt.Fn(){ public Object apply(Object pVBLy0_){
+          return new Rt.Data(1, new Object[]{ new Rt.Data(1, new Object[]{ ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_){
+            return C.this.f0(pw0_);
+          } })).apply(pVBLy0_) }) });
         } };
-        final Rt.Data dBBLy0 = ((Rt.Data)(py0));
-        return ((dBBLy0.tag == 0) ? ((Rt.Fn)(lLy0)).apply(c__Unit__unit()) : ((dBBLy0.tag == 1) ? ((Rt.Fn)(lBLy0)).apply(dBBLy0.fields[0]) : Rt.noBranch(dBBLy0, "BBLy0")));
+        final Rt.Data dBBLy0_ = ((Rt.Data)(py0_));
+        return ((dBBLy0_.tag == 0) ? ((Rt.Fn)(lLy0_)).apply(c__Unit__unit()) : ((dBBLy0_.tag == 1) ? ((Rt.Fn)(lBLy0_)).apply(dBBLy0_.fields[0]) : Rt.noBranch(dBBLy0_, "BBLy0_")));
       }
     }
-    final Fix z = new Fix();
-    return new Rt.Fn(){ public Object apply(Object w0){
-      return z.f0(w0);
+    final C z = new C();
+    return new Rt.Fn(){ public Object apply(Object pw0_){
+      return z.f0(pw0_);
     } };
   }
   // inductive c___Nat_: erased; values use Data(tag, fields)
   public static Object c___map(){
-    class Fix {
-      public Object f0(Object py0){
-        return new Rt.Fn(){ public Object apply(Object pLy0){
-          return new Rt.Fn(){ public Object apply(Object pLLy0){
-            return new Rt.Fn(){ public Object apply(Object pLLLy0){
-              final Object lLLLLy0 = new Rt.Fn(){ public Object apply(Object pVLLLLy0){
+    class C {
+      public Object f0(Object py0_){
+        return new Rt.Fn(){ public Object apply(Object pLy0_){
+          return new Rt.Fn(){ public Object apply(Object pLLy0_){
+            return new Rt.Fn(){ public Object apply(Object pLLLy0_){
+              final Object lLLLLy0_ = new Rt.Fn(){ public Object apply(Object pVLLLLy0_){
                 return new Rt.Data(0, new Object[]{  });
               } };
-              final Object lBLLLLy0 = new Rt.Fn(){ public Object apply(Object pVBLLLLy0){
-                return new Rt.Fn(){ public Object apply(Object pLVBLLLLy0){
-                  return new Rt.Data(1, new Object[]{ ((Rt.Fn)(pLLy0)).apply(pVBLLLLy0), ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0){
-                    return Fix.this.f0(w0);
-                  } })).apply(Rt.BOX))).apply(Rt.BOX))).apply(pLLy0))).apply(pLVBLLLLy0) });
+              final Object lBLLLLy0_ = new Rt.Fn(){ public Object apply(Object pVBLLLLy0_){
+                return new Rt.Fn(){ public Object apply(Object pLVBLLLLy0_){
+                  return new Rt.Data(1, new Object[]{ ((Rt.Fn)(pLLy0_)).apply(pVBLLLLy0_), ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_){
+                    return C.this.f0(pw0_);
+                  } })).apply(Rt.BOX))).apply(Rt.BOX))).apply(pLLy0_))).apply(pLVBLLLLy0_) });
                 } };
               } };
-              final Rt.Data dBBLLLLy0 = ((Rt.Data)(pLLLy0));
-              return ((dBBLLLLy0.tag == 0) ? ((Rt.Fn)(lLLLLy0)).apply(c__Unit__unit()) : ((dBBLLLLy0.tag == 1) ? ((Rt.Fn)(((Rt.Fn)(lBLLLLy0)).apply(dBBLLLLy0.fields[0]))).apply(dBBLLLLy0.fields[1]) : Rt.noBranch(dBBLLLLy0, "BBLLLLy0")));
+              final Rt.Data dBBLLLLy0_ = ((Rt.Data)(pLLLy0_));
+              return ((dBBLLLLy0_.tag == 0) ? ((Rt.Fn)(lLLLLy0_)).apply(c__Unit__unit()) : ((dBBLLLLy0_.tag == 1) ? ((Rt.Fn)(((Rt.Fn)(lBLLLLy0_)).apply(dBBLLLLy0_.fields[0]))).apply(dBBLLLLy0_.fields[1]) : Rt.noBranch(dBBLLLLy0_, "BBLLLLy0_")));
             } };
           } };
         } };
       }
     }
-    final Fix z = new Fix();
-    return new Rt.Fn(){ public Object apply(Object w0){
-      return z.f0(w0);
+    final C z = new C();
+    return new Rt.Fn(){ public Object apply(Object pw0_){
+      return z.f0(pw0_);
     } };
   }
   public static Object c__Unit__unit(){

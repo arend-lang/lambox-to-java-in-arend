@@ -13,30 +13,30 @@ public final class Prog {
     } };
   }
   public static Object c__List_range__loop(){
-    class Fix {
-      public Object f0(Object py0){
-        return new Rt.Fn(){ public Object apply(Object pLy0){
-          final Object lLLy0 = new Rt.Fn(){ public Object apply(Object pVLLy0){
-            return pVLLy0;
+    class C {
+      public Object f0(Object py0_){
+        return new Rt.Fn(){ public Object apply(Object pLy0_){
+          final Object lLLy0_ = new Rt.Fn(){ public Object apply(Object pVLLy0_){
+            return pVLLy0_;
           } };
-          final Object lBLLy0 = new Rt.Fn(){ public Object apply(Object pVBLLy0){
-            return new Rt.Fn(){ public Object apply(Object pLVBLLy0){
-              return ((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0){
-                return Fix.this.f0(w0);
-              } })).apply(pVBLLy0))).apply(new Rt.Data(1, new Object[]{ pVBLLy0, pLVBLLy0 }));
+          final Object lBLLy0_ = new Rt.Fn(){ public Object apply(Object pVBLLy0_){
+            return new Rt.Fn(){ public Object apply(Object pLVBLLy0_){
+              return ((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_){
+                return C.this.f0(pw0_);
+              } })).apply(pVBLLy0_))).apply(new Rt.Data(1, new Object[]{ pVBLLy0_, pLVBLLy0_ }));
             } };
           } };
-          final Object lBBLLy0 = py0;
-          final Rt.Data dBBBLLy0 = ((Rt.Data)(((Rt.Fn)(((Rt.Fn)(c__Nat__beq())).apply(lBBLLy0))).apply(Long.valueOf(0L))));
-          return ((dBBBLLy0.tag == 0) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pFb0BBBLLy0){
-            return ((Rt.Fn)(((Rt.Fn)(lBLLy0)).apply(pFb0BBBLLy0))).apply(pLy0);
-          } })).apply(((Rt.Fn)(((Rt.Fn)(c__Nat__sub())).apply(lBBLLy0))).apply(Long.valueOf(1L))) : ((dBBBLLy0.tag == 1) ? ((Rt.Fn)(lLLy0)).apply(pLy0) : Rt.noBranch(dBBBLLy0, "BBBLLy0")));
+          final Object lBBLLy0_ = py0_;
+          final Rt.Data dBBBLLy0_ = ((Rt.Data)(((Rt.Fn)(((Rt.Fn)(c__Nat__beq())).apply(lBBLLy0_))).apply(Long.valueOf(0L))));
+          return ((dBBBLLy0_.tag == 0) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pFb0_BBBLLy0_){
+            return ((Rt.Fn)(((Rt.Fn)(lBLLy0_)).apply(pFb0_BBBLLy0_))).apply(pLy0_);
+          } })).apply(((Rt.Fn)(((Rt.Fn)(c__Nat__sub())).apply(lBBLLy0_))).apply(Long.valueOf(1L))) : ((dBBBLLy0_.tag == 1) ? ((Rt.Fn)(lLLy0_)).apply(pLy0_) : Rt.noBranch(dBBBLLy0_, "BBBLLy0_")));
         } };
       }
     }
-    final Fix z = new Fix();
-    return new Rt.Fn(){ public Object apply(Object w0){
-      return z.f0(w0);
+    final C z = new C();
+    return new Rt.Fn(){ public Object apply(Object pw0_){
+      return z.f0(pw0_);
     } };
   }
   public static Object c__Nat__beq(){
@@ -66,35 +66,35 @@ public final class Prog {
     return Rt.PRIM_ADD_LONG;
   }
   public static Object c__List__foldl(){
-    class Fix {
-      public Object f0(Object py0){
-        return new Rt.Fn(){ public Object apply(Object pLy0){
-          return new Rt.Fn(){ public Object apply(Object pLLy0){
-            return new Rt.Fn(){ public Object apply(Object pLLLy0){
-              return new Rt.Fn(){ public Object apply(Object pLLLLy0){
-                final Object lLLLLLy0 = new Rt.Fn(){ public Object apply(Object pVLLLLLy0){
-                  return pVLLLLLy0;
+    class C {
+      public Object f0(Object py0_){
+        return new Rt.Fn(){ public Object apply(Object pLy0_){
+          return new Rt.Fn(){ public Object apply(Object pLLy0_){
+            return new Rt.Fn(){ public Object apply(Object pLLLy0_){
+              return new Rt.Fn(){ public Object apply(Object pLLLLy0_){
+                final Object lLLLLLy0_ = new Rt.Fn(){ public Object apply(Object pVLLLLLy0_){
+                  return pVLLLLLy0_;
                 } };
-                final Object lBLLLLLy0 = new Rt.Fn(){ public Object apply(Object pVBLLLLLy0){
-                  return new Rt.Fn(){ public Object apply(Object pLVBLLLLLy0){
-                    return new Rt.Fn(){ public Object apply(Object pLLVBLLLLLy0){
-                      return ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0){
-                        return Fix.this.f0(w0);
-                      } })).apply(Rt.BOX))).apply(Rt.BOX))).apply(pLLy0))).apply(((Rt.Fn)(((Rt.Fn)(pLLy0)).apply(pVBLLLLLy0))).apply(pLVBLLLLLy0)))).apply(pLLVBLLLLLy0);
+                final Object lBLLLLLy0_ = new Rt.Fn(){ public Object apply(Object pVBLLLLLy0_){
+                  return new Rt.Fn(){ public Object apply(Object pLVBLLLLLy0_){
+                    return new Rt.Fn(){ public Object apply(Object pLLVBLLLLLy0_){
+                      return ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_){
+                        return C.this.f0(pw0_);
+                      } })).apply(Rt.BOX))).apply(Rt.BOX))).apply(pLLy0_))).apply(((Rt.Fn)(((Rt.Fn)(pLLy0_)).apply(pVBLLLLLy0_))).apply(pLVBLLLLLy0_)))).apply(pLLVBLLLLLy0_);
                     } };
                   } };
                 } };
-                final Rt.Data dBBLLLLLy0 = ((Rt.Data)(pLLLLy0));
-                return ((dBBLLLLLy0.tag == 0) ? ((Rt.Fn)(lLLLLLy0)).apply(pLLLy0) : ((dBBLLLLLy0.tag == 1) ? ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(lBLLLLLy0)).apply(pLLLy0))).apply(dBBLLLLLy0.fields[0]))).apply(dBBLLLLLy0.fields[1]) : Rt.noBranch(dBBLLLLLy0, "BBLLLLLy0")));
+                final Rt.Data dBBLLLLLy0_ = ((Rt.Data)(pLLLLy0_));
+                return ((dBBLLLLLy0_.tag == 0) ? ((Rt.Fn)(lLLLLLy0_)).apply(pLLLy0_) : ((dBBLLLLLy0_.tag == 1) ? ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(lBLLLLLy0_)).apply(pLLLy0_))).apply(dBBLLLLLy0_.fields[0]))).apply(dBBLLLLLy0_.fields[1]) : Rt.noBranch(dBBLLLLLy0_, "BBLLLLLy0_")));
               } };
             } };
           } };
         } };
       }
     }
-    final Fix z = new Fix();
-    return new Rt.Fn(){ public Object apply(Object w0){
-      return z.f0(w0);
+    final C z = new C();
+    return new Rt.Fn(){ public Object apply(Object pw0_){
+      return z.f0(pw0_);
     } };
   }
   // inductive c___List: erased; values use Data(tag, fields)

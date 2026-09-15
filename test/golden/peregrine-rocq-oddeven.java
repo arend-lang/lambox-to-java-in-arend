@@ -4,23 +4,23 @@ public final class Prog {
   }
   public static Object c_OddEven_Tests_Peregrine__odd(){
     return new Rt.Fn(){ public Object apply(Object p){
-      class FixFL {
-        public Object f0(Object py0FL){
-          final Rt.Data dLy0FL = ((Rt.Data)(py0FL));
-          return ((dLy0FL.tag == 0) ? new Rt.Data(0, new Object[]{  }) : ((dLy0FL.tag == 1) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w1FL){
-            return FixFL.this.f1(w1FL);
-          } })).apply(dLy0FL.fields[0]) : Rt.noBranch(dLy0FL, "Ly0FL")));
+      class CFL {
+        public Object f0(Object py0_FL){
+          final Rt.Data dLy0_FL = ((Rt.Data)(py0_FL));
+          return ((dLy0_FL.tag == 0) ? new Rt.Data(0, new Object[]{  }) : ((dLy0_FL.tag == 1) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw1_FL){
+            return CFL.this.f1(pw1_FL);
+          } })).apply(dLy0_FL.fields[0]) : Rt.noBranch(dLy0_FL, "Ly0_FL")));
         }
-        public Object f1(Object py1FL){
-          final Rt.Data dLy1FL = ((Rt.Data)(py1FL));
-          return ((dLy1FL.tag == 0) ? new Rt.Data(1, new Object[]{  }) : ((dLy1FL.tag == 1) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FL){
-            return FixFL.this.f0(w0FL);
-          } })).apply(dLy1FL.fields[0]) : Rt.noBranch(dLy1FL, "Ly1FL")));
+        public Object f1(Object py1_FL){
+          final Rt.Data dLy1_FL = ((Rt.Data)(py1_FL));
+          return ((dLy1_FL.tag == 0) ? new Rt.Data(1, new Object[]{  }) : ((dLy1_FL.tag == 1) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_FL){
+            return CFL.this.f0(pw0_FL);
+          } })).apply(dLy1_FL.fields[0]) : Rt.noBranch(dLy1_FL, "Ly1_FL")));
         }
       }
-      final FixFL zFL = new FixFL();
-      return ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0FL){
-        return zFL.f0(w0FL);
+      final CFL zFL = new CFL();
+      return ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_FL){
+        return zFL.f0(pw0_FL);
       } })).apply(p);
     } };
   }

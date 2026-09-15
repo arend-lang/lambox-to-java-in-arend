@@ -8,6 +8,7 @@
 \import JavaAst
 \import JavaAxioms
 \import JavaPrint
+\import NodePath
 \import StringUtil
 
 -- =============================================================================
@@ -40,8 +41,10 @@
 -- closure (verified). Hence `mkArray {..} {xs.len} (\lam i => .. (xs i))`;
 -- combining results with `++`/`Big`/`map` is fine, as those never call back in.
 --
--- Names derive from a structural `path : String` passed down and branched per
--- child, so there is no fresh-name counter and no state to thread.
+-- Names derive from a structural `path : Path` passed down and branched per child,
+-- so there is no fresh-name counter and no state to thread. A path is a list of
+-- child selectors and a name is a (kind, path) pair; both are datatypes, and
+-- `NodePath.ard` is the one place either becomes text.
 -- =============================================================================
 
 -- Compilation result: (statements to run first, value expression).
@@ -54,7 +57,7 @@
 -- An index larger than the number of enclosing binders is ill-formed input; see
 -- `rtUnbound` (JavaAxioms.ard) for what it compiles to and why. `n0` is the
 -- original index, kept for that message while `n` counts down.
-\func nthVar (n : Nat) (env : Array JExpr) (n0 : Nat) (path : String) : JExpr \elim n, env
+\func nthVar (n : Nat) (env : Array JExpr) (n0 : Nat) (path : Path) : JExpr \elim n, env
   | _, nil => rtUnbound n0 path
   | 0, x :: _ => x
   | suc n, _ :: env => nthVar n env n0 path
@@ -114,10 +117,10 @@
 --
 -- Only the SELECTED arm's thunk is allocated -- the allocation is inside the arm
 -- -- which is what this buys over passing all k branches to a runtime `match`.
-\func armExpr (stmts : Array JStmt) (val : JExpr) (path : String) : JExpr \elim stmts
+\func armExpr (stmts : Array JStmt) (val : JExpr) (path : Path) : JExpr \elim stmts
   | nil => val
   | s :: ss =>
-    jApply (jClosure ("t" ++ path) (appendStmts (s :: ss) (jReturn val :: nil))) jBox
+    jApply (jClosure (renderName nThunk path) (appendStmts (s :: ss) (jReturn val :: nil))) jBox
 
 -- The arms, as one nested conditional: `d.tag == 0 ? a0 : d.tag == 1 ? a1 : ..`.
 -- `tag` counts up with the position, since a branch's index IS its constructor's
@@ -128,7 +131,7 @@
 -- erasure is -- but it would also turn a scrutinee with an impossible tag from an
 -- immediate error into a silently wrong answer. It is the `default:` the earlier
 -- `switch` encoding threw from.
-\func condChain (scrut : JExpr) (tag : Nat) (arms : Array JExpr) (path : String) : JExpr \elim arms
+\func condChain (scrut : JExpr) (tag : Nat) (arms : Array JExpr) (path : Path) : JExpr \elim arms
   | nil => rtNoBranch scrut path
   | a :: arms => jCond (jTagEq scrut tag) a (condChain scrut (suc tag) arms path)
 
@@ -136,11 +139,9 @@
 -- The local-class `fix` encoding; see the `fix` clause of `compileExpr`.
 -- ---------------------------------------------------------------------------
 
--- The local class of the fix at `path`, and its j-th method. Both are derived
--- from the path, so they are unique without a counter, like every other
--- generated name here. `Fix` is capitalized because it names a class.
-\func fixClassName (path : String) : String => "Fix" ++ path
-
+-- The j-th method of a fix's local class. The only generated name that is NOT
+-- path-derived, and the only one that needs no path: a method name lives in its
+-- own class's namespace, and the class is fresh, so `j` alone separates them.
 \func fixMethodName (j : Nat) : String => "f" ++ natToStr j
 
 -- The j-th sibling AS A VALUE: a closure forwarding to the method, since λ□ lets
@@ -153,21 +154,24 @@
 -- analysis should remove entirely.
 --
 -- `recv`: `FixP.this` from inside the class, the instance local from outside.
-\func fixMethodRef (recv : JExpr) (path : String) (j : Nat) : JExpr =>
-  \let wp => "w" ++ natToStr j ++ path
+--
+-- The closure's parameter is an ordinary parameter, at a path of its own
+-- (`sWrap j`): this site compiles no child, so that path names nothing else.
+\func fixMethodRef (recv : JExpr) (path : Path) (j : Nat) : JExpr =>
+  \let wp => renderName nParam (sWrap j :: path)
   \in jClosure wp (jReturn (jInvoke recv (fixMethodName j) (jVar wp :: nil)) :: nil)
 
 -- Push the k siblings onto env as forwarding closures; head = f(k-1) = de
 -- Bruijn 0, the same order `pushFix` establishes for the array encoding
 -- (λ□'s fix_subst). No compileExpr.
-\func pushFixMethods (recv : JExpr) (path : String) (j k : Nat) (env : Array JExpr)
+\func pushFixMethods (recv : JExpr) (path : Path) (j k : Nat) (env : Array JExpr)
   : Array JExpr \elim k
   | 0 => env
   | suc k => pushFixMethods recv path (suc j) k (fixMethodRef recv path j :: env)
 
 -- Core compiler. `path` uniquely identifies this node; binder names and child
 -- paths are derived from it, so no state threading is needed.
-\func compileExpr (env : Array JExpr) (path : String) (t : LBTerm) : Out \elim t
+\func compileExpr (env : Array JExpr) (path : Path) (t : LBTerm) : Out \elim t
   | box => (nil, jBox)
 
   | bvar n => (nil, nthVar n env n path)
@@ -181,24 +185,24 @@
   | const k => (nil, jCallStatic (mangleKername k) nil)
 
   | app f a =>
-    \let | of => compileExpr env ("F" ++ path) f
-         | oa => compileExpr env ("A" ++ path) a
+    \let | of => compileExpr env (sFun :: path) f
+         | oa => compileExpr env (sArg :: path) a
     \in (appendStmts of.1 oa.1, jApply of.2 oa.2)
 
   | lambda _ body =>
-    \let | pv => "p" ++ path
-         | ob => compileExpr (jVar pv :: env) ("L" ++ path) body
+    \let | pv => renderName nParam path
+         | ob => compileExpr (jVar pv :: env) (sLamBody :: path) body
     \in (nil, jClosure pv (appendStmts ob.1 (jReturn ob.2 :: nil)))
 
   | letIn _ value body =>
-    \let | ov => compileExpr env ("V" ++ path) value
-         | lv => "l" ++ path
-         | ob => compileExpr (jVar lv :: env) ("B" ++ path) body
+    \let | ov => compileExpr env (sLetVal :: path) value
+         | lv => renderName nLet path
+         | ob => compileExpr (jVar lv :: env) (sLetBody :: path) body
     \in (appendStmts ov.1 (jLocal tObject lv ov.2 :: ob.1), ob.2)
 
   -- construct: recurse inline over the Array of args.
   | construct _ cidx args =>
-    \let | results => mkArray {Out} {args.len} (\lam i => compileExpr env ("c" ++ natToStr i ++ path) (args i))
+    \let | results => mkArray {Out} {args.len} (\lam i => compileExpr env (sCtorArg i :: path) (args i))
     \in (concatStmts results, jDataNew cidx (map (\lam r => r.2) results))
 
   -- case: a chain of `d.tag == i ? <branch i>` tests, which is what λ□'s own
@@ -215,14 +219,14 @@
   -- A match with NO branches (an erased `Empty`) still evaluates and casts the
   -- scrutinee, as the `switch` encoding did, and its value is `Rt.noBranch`.
   | case _ npars scrut brs =>
-    \let | os => compileExpr env ("S" ++ path) scrut
-         | dv => "d" ++ path
+    \let | os => compileExpr env (sScrut :: path) scrut
+         | dv => renderName nScrut path
          | d  => jVar dv
          -- Recurse on the DIRECT projection `(brs i).2`, NOT a `\case`-bound
          -- variable: the checker tracks `(brs i).2 < t` (index into the sub-term
          -- `brs`, then project) but loses that through a `\case` pattern binding.
          | arms => mkArray {JExpr} {brs.len} (\lam i =>
-             \let | bp => "b" ++ natToStr i ++ path
+             \let | bp => sBranch i :: path
                   | ob => compileExpr (pushFields d npars (brs i).1 env) bp (brs i).2
              \in armExpr ob.1 ob.2 bp)
     \in (appendStmts os.1 (jLocal tData dv (jCast tData os.2) :: nil),
@@ -230,7 +234,7 @@
 
   -- proj: the AST has no arithmetic node, so `npars + idx` is added here.
   | proj pinfo scrut =>
-    \let | os => compileExpr env ("P" ++ path) scrut
+    \let | os => compileExpr env (sProj :: path) scrut
     \in (os.1,
          jDataField (jCast tData os.2) (pinfo.projParamCount Nat.+ pinfo.projFieldIdx))
 
@@ -242,11 +246,11 @@
   -- also what keeps the mutual recursion with `compileFixMethod` in reach.
   | fix defs idx =>
     \let | k     => defs.len
-         | cls   => fixClassName path
-         | inst  => "z" ++ path
+         | cls   => renderName nFixClass path
+         | inst  => renderName nFixInst path
          | env'  => pushFixMethods (jQualThis cls) path 0 k env
          | methods => mkArray {\Sigma JIdent JIdent (Array JStmt)} {k} (\lam j =>
-             \let | m => compileFixMethod env' ("y" ++ natToStr j ++ path) (defs j).defBody
+             \let | m => compileFixMethod env' (sMethod j :: path) (defs j).defBody
              \in (fixMethodName j, m.1, m.2))
     \in (jLocalClass cls methods ::
          jLocal (tClass cls) inst (jNew (tClass cls) nil) ::
@@ -264,15 +268,19 @@
 -- term diverges, and so does this Java, loudly. That is why the encoding needs no
 -- well-formedness side condition, and why the clause is not dead weight even
 -- though erasure output is always a lambda.
-\func compileFixMethod (env : Array JExpr) (path : String) (t : LBTerm)
+\func compileFixMethod (env : Array JExpr) (path : Path) (t : LBTerm)
   : \Sigma JIdent (Array JStmt) \elim t
   | lambda _ inner =>
-    \let | pv => "p" ++ path
-         | ob => compileExpr (jVar pv :: env) ("L" ++ path) inner
+    \let | pv => renderName nParam path
+         | ob => compileExpr (jVar pv :: env) (sLamBody :: path) inner
     \in (pv, appendStmts ob.1 (jReturn ob.2 :: nil))
   | t =>
-    \let | pv => "p" ++ path
-         | ot => compileExpr env path t
+    \let | pv => renderName nParam path
+         -- `sEta`, not `path`: the body is a child of the eta-expansion, so a body
+         -- that happened to be a lambda mints its parameter at a path of its own
+         -- rather than at this method's -- which is now a property of the path,
+         -- not of `\elim` having taken the clause above first.
+         | ot => compileExpr env (sEta :: path) t
     \in (pv, jComment "unguarded fix body: eta-expanded (diverges instead of reading an unassigned slot)" ::
              appendStmts ot.1 (jReturn (jApply ot.2 (jVar pv)) :: nil))
 
@@ -291,7 +299,7 @@
   \in \case kd.2 \with {
     | constantDecl cb => \case cb.cstBody \with {
       | just body =>
-        \let | o => compileExpr nil "" body
+        \let | o => compileExpr nil nil body
         \in constMethod name (appendStmts o.1 (jReturn o.2 :: nil))
       | nothing => \case axiomImpl name \with {
         | just impl => constMethod name (jReturn impl :: nil)
@@ -323,7 +331,7 @@
 -- `Rt.runMain` (non-tail `fix` recursion needs a stack the OS does not give the
 -- primordial thread).
 \func compileBody (t : LBTerm) : Array JMember =>
-  \let | o => compileExpr nil "" t
+  \let | o => compileExpr nil nil t
   \in constMethod bodyMethodName (appendStmts o.1 (jReturn o.2 :: nil)) :: nil
 
 -- Only the program-specific class is generated; `Fn`, `Data` and `BOX` come from

@@ -124,3 +124,5 @@ timestamp	program	check	result	java_gen	ocaml_gen	c_gen	java_build	ocaml_build	c
 2026-08-31T15:13:43Z	peano	expected	ok	25.5	-	-	1.3	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
 2026-08-31T15:13:43Z	peregrine-rocq-oddeven	expected	ok	25.7	-	-	1.3	-	-	0.1	-	-	0	0
 2026-09-04T12:53:22Z	letchain	expected	ok	19.7	-	-	1.4	-	-	1.0	-	-	400000000	400000000
+2026-09-15T10:19:32Z	peano	expected	ok	18.7	-	-	1.2	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
+2026-09-15T10:19:32Z	leanbench-even	expected	ok	20.2	0.0	-	1.4	0.9	-	0.1	0.0	-	1	1

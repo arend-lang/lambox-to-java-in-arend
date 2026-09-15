@@ -3,17 +3,17 @@ public final class Prog {
     return ((Rt.Fn)(c___iflazy())).apply(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__OfNat__ofNat())).apply(Rt.BOX))).apply(Long.valueOf(10L)))).apply(((Rt.Fn)(c___instOfNatNat())).apply(Long.valueOf(10L))));
   }
   public static Object c___iflazy(){
-    class Fix {
-      public Object f0(Object py0){
-        final Rt.Data dLy0 = ((Rt.Data)(((Rt.Fn)(((Rt.Fn)(c___instDecidableEqNat())).apply(py0))).apply(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__OfNat__ofNat())).apply(Rt.BOX))).apply(Long.valueOf(0L)))).apply(((Rt.Fn)(c___instOfNatNat())).apply(Long.valueOf(0L))))));
-        return ((dLy0.tag == 0) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object w0){
-          return Fix.this.f0(w0);
-        } })).apply(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__HSub__hSub())).apply(Rt.BOX))).apply(Rt.BOX))).apply(Rt.BOX))).apply(((Rt.Fn)(((Rt.Fn)(c___instHSub())).apply(Rt.BOX))).apply(c___instSubNat())))).apply(py0))).apply(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__OfNat__ofNat())).apply(Rt.BOX))).apply(Long.valueOf(1L)))).apply(((Rt.Fn)(c___instOfNatNat())).apply(Long.valueOf(1L))))) : ((dLy0.tag == 1) ? ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__OfNat__ofNat())).apply(Rt.BOX))).apply(Long.valueOf(42L)))).apply(((Rt.Fn)(c___instOfNatNat())).apply(Long.valueOf(42L))) : Rt.noBranch(dLy0, "Ly0")));
+    class C {
+      public Object f0(Object py0_){
+        final Rt.Data dLy0_ = ((Rt.Data)(((Rt.Fn)(((Rt.Fn)(c___instDecidableEqNat())).apply(py0_))).apply(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__OfNat__ofNat())).apply(Rt.BOX))).apply(Long.valueOf(0L)))).apply(((Rt.Fn)(c___instOfNatNat())).apply(Long.valueOf(0L))))));
+        return ((dLy0_.tag == 0) ? ((Rt.Fn)(new Rt.Fn(){ public Object apply(Object pw0_){
+          return C.this.f0(pw0_);
+        } })).apply(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__HSub__hSub())).apply(Rt.BOX))).apply(Rt.BOX))).apply(Rt.BOX))).apply(((Rt.Fn)(((Rt.Fn)(c___instHSub())).apply(Rt.BOX))).apply(c___instSubNat())))).apply(py0_))).apply(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__OfNat__ofNat())).apply(Rt.BOX))).apply(Long.valueOf(1L)))).apply(((Rt.Fn)(c___instOfNatNat())).apply(Long.valueOf(1L))))) : ((dLy0_.tag == 1) ? ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__OfNat__ofNat())).apply(Rt.BOX))).apply(Long.valueOf(42L)))).apply(((Rt.Fn)(c___instOfNatNat())).apply(Long.valueOf(42L))) : Rt.noBranch(dLy0_, "Ly0_")));
       }
     }
-    final Fix z = new Fix();
-    return new Rt.Fn(){ public Object apply(Object w0){
-      return z.f0(w0);
+    final C z = new C();
+    return new Rt.Fn(){ public Object apply(Object pw0_){
+      return z.f0(pw0_);
     } };
   }
   public static Object c___instSubNat(){
@@ -25,9 +25,9 @@ public final class Prog {
   public static Object c___instHSub(){
     return new Rt.Fn(){ public Object apply(Object p){
       return new Rt.Fn(){ public Object apply(Object pL){
-        return new Rt.Data(0, new Object[]{ new Rt.Fn(){ public Object apply(Object pc0LL){
-          return new Rt.Fn(){ public Object apply(Object pLc0LL){
-            return ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__Sub__sub())).apply(Rt.BOX))).apply(pL))).apply(pc0LL))).apply(pLc0LL);
+        return new Rt.Data(0, new Object[]{ new Rt.Fn(){ public Object apply(Object pc0_LL){
+          return new Rt.Fn(){ public Object apply(Object pLc0_LL){
+            return ((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(((Rt.Fn)(c__Sub__sub())).apply(Rt.BOX))).apply(pL))).apply(pc0_LL))).apply(pLc0_LL);
           } };
         } } });
       } };
