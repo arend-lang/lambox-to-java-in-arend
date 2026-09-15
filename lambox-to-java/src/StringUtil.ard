@@ -32,10 +32,12 @@
   | 0 => ""
   | suc n => "  " ++ indentStr n
 
-\func digitLit (d : Nat) : String
+-- A digit is a `Fin 10`, not a `Nat` with an unreachable clause: the only caller
+-- passes `_ mod 10`, which IS one (Arend's `mod` by a literal elaborates at that
+-- type), and typing it so leaves no case whose correctness has to be argued.
+\func digitLit (d : Fin 10) : String
   | 0 => "0" | 1 => "1" | 2 => "2" | 3 => "3" | 4 => "4"
   | 5 => "5" | 6 => "6" | 7 => "7" | 8 => "8" | 9 => "9"
-  | _ => "?"  -- unreachable: only ever called with d = _ mod 10
 
 -- Decimal rendering of a Nat. `n Nat.div 10` is not a sub-pattern of `n`, so
 -- the termination checker can't see it as structurally smaller; recursing on
@@ -44,15 +46,17 @@
 -- Recurring on the quotient BEFORE appending the remainder digit produces
 -- digits in the correct most-significant-first order (checked: natToStr 42 =
 -- natToStrFuel _ 4 ++ "2" = "4" ++ "2" = "42").
+--
+-- The quotient is split off into `natToStrStep` rather than tested by an inner
+-- `\case`, so that a proof about this recursion can `\elim` the quotient the same
+-- way the definition does (see NodePathUnique.ard, which needs exactly that).
 \func natToStrFuel (fuel n : Nat) : String \elim fuel
   | 0 => "0"
-  | suc fuel =>
-    \let | q => n Nat.div 10
-         | r => n Nat.mod 10
-    \in \case q \with {
-      | 0 => digitLit r
-      | suc _ => natToStrFuel fuel q ++ digitLit r
-    }
+  | suc fuel => natToStrStep fuel (n Nat.div 10) (n Nat.mod 10)
+
+\func natToStrStep (fuel q : Nat) (r : Fin 10) : String \elim q
+  | 0 => digitLit r
+  | suc q => natToStrFuel fuel (suc q) ++ digitLit r
 
 \func natToStr (n : Nat) : String =>
   \case n \with {
