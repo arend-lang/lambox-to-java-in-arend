@@ -75,7 +75,12 @@ if grep -q '^\[ERROR\]' "$log"; then
   die "Arend reported errors on $target"
 fi
 
-text=$(sed -n '/^--- Typechecking /,/^--- Done (/p' "$log" | sed '1d;$d')
+# `[WARN]`/`[INFO]` lines can land INSIDE the delimiters -- the daemon reports
+# `[WARN] Slow typecheck (12.5s, threshold 5000ms)` while typechecking, which
+# ended up as the last line of six generated Prog.java files and made every one
+# of them fail to compile. Generated Java never starts a line with `[`, so
+# dropping them is safe with or without the daemon.
+text=$(sed -n '/^--- Typechecking /,/^--- Done (/p' "$log" | sed '1d;$d' | grep -vE '^\[(WARN|INFO)\]' || true)
 [ -n "$text" ] || { cat "$log" >&2; die "no printed output found for $target"; }
 
 if [ -n "$out" ]; then
