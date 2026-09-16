@@ -52,7 +52,7 @@ visible both in the terminal and afterwards in `git diff`.
   `golden.py`. **Do not prune the set by size** — three of the four are the
   cheapest program in the corpus exhibiting their feature.
 * `--set cover` — adds `lean-deriv`, the only program (with `leanbench-deriv`)
-  reaching `Rt.EQ_REC` and the `Rt.INT_*` family. Complete coverage, but 185 s,
+  reaching `Rt.EQ_REC` and the `Rt.INT_*` family. Complete coverage, but ~130 s,
   because that one program is 23k lines.
 * `--jobs N` — shards across N Arend processes. **Measured to lose** on these
   sets (12 small programs: 31 s with 1 shard, 82 s with 4): each shard pays ~25 s
@@ -118,13 +118,13 @@ Measured on this machine, same jar both ways (`cliDaemon-12`):
 
     golden.py (smoke, 4 programs)        27 s  ->  10-11 s
     run.py peano leanbench-even          50 s  ->     7 s   <- gen: 21 s -> 1.2 s
-    golden.py --set cover               185 s  ->    131 s   <- little gain
+    golden.py --set cover               129 s  ->    131 s   <- NO gain
 
 The pattern: the daemon removes a fixed per-invocation cost and nothing else.
 That is most of the runtime for small programs and for `run.py`, which pays it
-once per program; it is a minor part of `--set cover`, whose time is `lean-deriv`
-actually being compiled. So reach for it when iterating, not to make a big sweep
-cheap.
+once per program; it is nothing at all for `--set cover`, whose time is
+`lean-deriv` actually being compiled -- there the two modes measure the same to
+within noise. So reach for it when iterating, not to make a big sweep cheap.
 
 **It needs a CLI that has a daemon**, which 1.12 as released does not; `start`
 exits 3 (skip-no-tool) if the jar has no `-d`. Verified against upstream

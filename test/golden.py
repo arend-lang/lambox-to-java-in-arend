@@ -257,7 +257,7 @@ def shard(selection, jobs):
     dependencies -- is about 25 s, which on small selections is nearly the whole
     runtime. Measured on this machine:
 
-      12 small programs, 1 shard   31 s     |  --set cover, 1 shard   185 s
+      12 small programs, 1 shard   31 s     |  --set cover, 1 shard   129 s
       12 small programs, 4 shards  82 s     |  --set cover, 2 shards  205 s
 
     i.e. sharding LOST both times, by 2.6x and 1.1x. It can only win when the
