@@ -44,15 +44,45 @@ AREND_PROJECT="${AREND_PROJECT:-$ROOT/lambox-to-java}"
 # tools/extract-arend.sh for where that cost actually goes). Start one with
 # `tools/daemon.sh start`; everything then works with or without it.
 #
-# Requires a CLI that HAS a daemon: it is not in 1.12 as released. Three things
-# the daemon changes, each handled where it bites:
+# Requires a CLI that HAS a daemon: it is not in 1.12 as released. Verified
+# against upstream `cliDaemon-12` plus this fork's one String commit cherry-picked
+# on top (`arend-lang/Arend`; `cliDaemon-2`/`-4` also worked, less well). Two
+# things the daemon changes, each handled where it bites:
 #
-#   * the library positional must be omitted   -> tools/extract-arend.sh
 #   * `bin` must not be cleared under it       -> tools/extract-arend.sh
 #   * a definition it thinks is unchanged is not re-typechecked, so the
 #     `putStrLn` this harness harvests never runs -> the `--stamp` footer in
 #     tools/ast-to-arend, and stamped definition names in golden.py
+#
+# And one thing AREND_DAEMON=0 has to say explicitly, because a daemon-capable CLI
+# AUTO-ROUTES: `--no-daemon` -> tools/extract-arend.sh. (`golden.py` needs no such
+# flag: its non-daemon path runs in a private COPY of the project, which is a
+# different library, and a daemon serves only the one it was started for.)
+#
+# A quirk gone since cliDaemon-12: the library positional used to have to be
+# omitted for a daemon-served command. The command line is now identical in both
+# modes.
 AREND_DAEMON="${AREND_DAEMON:-0}"
+
+# Whether this CLI understands the daemon flags at all -- 1.12 as released does
+# not, and passing `--no-daemon` to it is a hard error, so the answer has to be
+# asked before it is used. The probe is a whole JVM start, and `gen` runs once per
+# program, so it is cached per jar identity (mtime and size).
+arend_has_daemon() {
+  local id probe
+  id=$(stat -c '%Y-%s' "$AREND_JAR" 2>/dev/null || echo unknown)
+  probe="$WORK_DIR/arend-daemon-capable.$id"
+  if [ ! -f "$probe" ]; then
+    mkdir -p "$WORK_DIR"
+    # Captured, not piped: the CLI exits non-zero after printing help, which
+    # under `pipefail` would make every jar look daemon-less.
+    case $("$JAVA" -jar "$AREND_JAR" --help 2>&1 || true) in
+      *--no-daemon*) echo yes >"$probe" ;;
+      *)             echo no  >"$probe" ;;
+    esac
+  fi
+  [ "$(cat "$probe")" = yes ]
+}
 
 AREND_EXAMPLES_PROJECT="$ROOT/lambox-to-java-examples"
 AREND_LIBDIR="$HOME/.arend/libs"

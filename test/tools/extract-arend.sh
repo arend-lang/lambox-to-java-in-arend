@@ -99,21 +99,27 @@ mkdir -p "$WORK_DIR"
 log=$(mktemp "$WORK_DIR/extract-XXXXXX.log")
 trap 'rm -f "$log"' EXIT
 
-# In daemon mode (AREND_DAEMON=1, see lib.sh) the library positional must be
-# omitted -- a daemon-served command reports `[ERROR] Module not found:
-# arend.yaml` for it, which the error check below would read as a failure -- and
-# the cache must not be cleared, the daemon owning that state.
-if [ "$AREND_DAEMON" = 1 ]; then
-  arend_args=("${extra_l[@]}" "$target")
-else
+# A daemon-served command takes the library positional like any other (it did NOT
+# on the cliDaemon-2/-4 branches, which reported `[ERROR] Module not found:
+# arend.yaml` for it), so the target and the library are spelled the same either
+# way. Two things still differ:
+#
+#   * `--no-daemon`, because an ordinary call AUTO-ROUTES to a daemon serving this
+#     library if one is up. Without the flag, `AREND_DAEMON=0` would silently
+#     become a daemon run whenever someone left one running -- measured: a `gen`
+#     that should cost ~20 s came back in 1.1 s -- and it would do so WITHOUT the
+#     stamping daemon mode needs, so an unchanged module would harvest nothing.
+#   * the cache: under a daemon it is the daemon's to own, so it must not be wiped.
+if [ "$AREND_DAEMON" != 1 ]; then
+  arend_has_daemon && extra_l+=(--no-daemon)
   # No cache may satisfy any module of this run: a stale one of a DEPENDENCY hides
   # a source change, and a stale one of the target's own module skips the
   # `putStrLn` side effect we harvest. When the target lives in the examples
   # project, lambox-to-java's cache is a dependency of it too, so both are cleared.
   rm -rf "$project/bin"
   [ "$project" = "$AREND_PROJECT" ] || rm -rf "$AREND_PROJECT/bin"
-  arend_args=("${extra_l[@]}" arend.yaml "$target")
 fi
+arend_args=("${extra_l[@]}" arend.yaml "$target")
 
 start=$(date +%s%N)
 # The exit status is not a reliable success signal: the CLI also returns 1 when

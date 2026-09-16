@@ -128,3 +128,10 @@ timestamp	program	check	result	java_gen	ocaml_gen	c_gen	java_build	ocaml_build	c
 2026-09-15T10:19:32Z	leanbench-even	expected	ok	20.2	0.0	-	1.4	0.9	-	0.1	0.0	-	1	1
 2026-09-15T10:47:08Z	peano	expected	ok	20.7	-	-	1.2	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
 2026-09-15T10:47:08Z	leanbench-even	expected	ok	25.7	0.0	-	1.2	0.7	-	0.1	0.0	-	1	1
+2026-09-16T13:17:16Z	peano	expected	ok	1.2	-	-	1.0	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
+2026-09-16T13:17:16Z	leanbench-even	expected	ok	2.3	0.0	-	1.0	0.9	-	0.1	0.0	-	1	1
+2026-09-16T13:25:33Z	peano	expected	ok	1.4	-	-	1.4	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
+2026-09-16T13:25:33Z	leanbench-even	expected	ok	2.0	0.0	-	1.3	1.2	-	0.1	0.0	-	1	1
+2026-09-16T13:26:15Z	peano	expected	ok	1.1	-	-	1.0	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
+2026-09-16T13:27:32Z	peano	expected	ok	19.2	-	-	1.1	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
+2026-09-16T13:28:04Z	peano	expected	ok	1.3	-	-	1.1	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))

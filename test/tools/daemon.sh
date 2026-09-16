@@ -40,6 +40,18 @@ start)
     *) warn "this Arend CLI has no daemon ($AREND_JAR); build a branch that has one"
        exit "$MISSING_TOOL_EXIT" ;;
   esac
+  # A start that was killed leaves `.arend/daemon.starting` behind, and the next
+  # one then refuses with "another daemon start is already in progress". It is
+  # stale exactly when nothing is serving and no bootstrap is running, which is
+  # cheap to establish, so recover instead of making the next person read the
+  # message. (Bootstrap is minutes long when `src/Imported` is populated -- see
+  # below -- which is how one gets killed in the first place.)
+  lock=$AREND_PROJECT/.arend/daemon.starting
+  if [ -f "$lock" ] && ! arend --daemon-ping arend.yaml >/dev/null 2>&1 &&
+     ! pgrep -f -- "--daemon-bootstrap $AREND_PROJECT/arend.yaml" >/dev/null; then
+    info "removing a stale start lock ($lock): nothing is serving and no bootstrap is running"
+    rm -f "$lock"
+  fi
   count=$(find "$AREND_PROJECT/src/Imported" -name '*.ard' 2>/dev/null | wc -l)
   if [ "$count" -gt 0 ]; then
     info "clearing $count generated Imported module(s) -- bootstrap would compile every one"

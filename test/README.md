@@ -114,25 +114,34 @@ nothing changes: every Arend invocation pays ~18 s to parse arend-lib (see
     AREND_DAEMON=1 test/run.py peano letchain
     test/tools/daemon.sh stop         # also: status
 
-Measured on this machine, same jar both ways:
+Measured on this machine, same jar both ways (`cliDaemon-12`):
 
-    golden.py (smoke, 4 programs)     27-33 s  ->   8-15 s
-    run.py peano letchain                61 s  ->     10 s
-    golden.py --set cover                112 s  ->    105 s   <- no gain
+    golden.py (smoke, 4 programs)        27 s  ->  10-11 s
+    run.py peano leanbench-even          50 s  ->     7 s   <- gen: 21 s -> 1.2 s
+    golden.py --set cover               185 s  ->    131 s   <- little gain
 
 The pattern: the daemon removes a fixed per-invocation cost and nothing else.
 That is most of the runtime for small programs and for `run.py`, which pays it
-once per program; it is noise for `--set cover`, whose time is `lean-deriv`
+once per program; it is a minor part of `--set cover`, whose time is `lean-deriv`
 actually being compiled. So reach for it when iterating, not to make a big sweep
 cheap.
 
 **It needs a CLI that has a daemon**, which 1.12 as released does not; `start`
-exits 3 (skip-no-tool) if the jar has no `-d`. Three consequences of the daemon
-are handled for you, and are worth knowing because they all bit us first:
+exits 3 (skip-no-tool) if the jar has no `-d`. Verified against upstream
+`cliDaemon-12` with this fork's String commit cherry-picked on top — that branch
+is a strict improvement on `cliDaemon-2`/`-4`: it takes the library positional
+like any other command (so the harness' command line is now identical in both
+modes), and the stale-`.arc` failures those branches showed are gone (they are
+what its `Write .arc files atomically…` / `Pin the order binary caches are
+deserialized in` commits are about). Three consequences of the daemon are handled
+for you, and are worth knowing because they all bit us first:
 
 * `start` clears `src/Imported` — bootstrap typechecks the whole library, and
-  each generated module typechecks by COMPILING its program, which overflows the
-  stack at 69 of them. The gen stage rewrites them anyway.
+  each generated module typechecks by COMPILING its program. On `cliDaemon-2`
+  that overflowed the stack at 69 of them; on `cliDaemon-12` it does not overflow
+  (measured: 12 of 65 modules in 6 minutes, no overflow) but it is far slower
+  than the CLI's own 600 s wait for readiness, so a start with them present never
+  reports ready. The gen stage rewrites them anyway.
 * `start` exports `-Xss1g` to the daemon's child JVM, which is spawned with no
   options of its own.
 * a definition the daemon considers unchanged is not re-typechecked, and the
