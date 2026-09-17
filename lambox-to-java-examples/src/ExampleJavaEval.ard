@@ -1,0 +1,54 @@
+\import Data.Maybe
+\import Data.String
+\import ExamplePeano
+\import JavaAst
+\import JavaEval
+\import JavaValue
+\import Paths
+\import ToJava
+
+-- =============================================================================
+-- The Java fragment's semantics, run on a compiled program.
+--
+-- `JavaEval.ard` is executable on purpose (see its header). This is the first
+-- thing that executes it: λ□ program -> `compileClass` -> `runClass`, and the
+-- result compared with the value the harness expects from the REAL run of the
+-- same program (`test/corpora/handwritten/peano/meta`: `1(1(1(1(0))))`, i.e.
+-- suc^4 zero, `Nat` being declared zero-then-suc).
+--
+-- It is a `\lemma` proved by `idp`, so typechecking this module IS the check: if
+-- the evaluator disagreed, or got stuck, or ran out of fuel, this would not
+-- typecheck. That makes it a cheap differential test against the JVM for one
+-- program -- not a proof of anything about the generator, which is what a
+-- `Correct` statement relating `LambdaBoxEval` to `JEval` would be.
+--
+-- WHY HERE and not in the compiler project: this needs a λ□ program, and the
+-- committed ones live here. The alternative, `src/Imported/<Module>.ard`, is
+-- generated and gitignored, so a module importing it does not typecheck in a
+-- fresh clone -- the trap the earlier semantics branch fell into.
+-- =============================================================================
+
+-- peano needs NOTHING from the runtime: it has no axioms (that is why it is the
+-- smoke set's "canonical small one"), so every field of the interface may say
+-- "not covered". An instance that answers nothing is the strongest possible
+-- statement that the run below is about the fragment and not about `Rt.java`.
+\func rtNone : RtSpec \cowith
+  | rtField _ => nothing
+  | builtinArity _ => nothing
+  | builtinRun _ _ => rStuck
+  | rtStaticCall _ _ => nothing
+
+\func peanoClass : JClass => compileClass "Prog" addProgram
+
+-- suc^4 zero, as a value of the fragment: `Nat`'s constructors are zero = tag 0
+-- and suc = tag 1, and an erased inductive's parameters are not stored.
+\func sucV (v : Value) : Value => vData 1 (v :: nil)
+
+\func zeroV : Value => vData 0 nil
+
+\func four : Value => sucV (sucV (sucV (sucV zeroV)))
+
+-- 1 + 3 = 4, computed by the semantics of the generated Java.
+-- (a `\func`, not a `\lemma`: `Res RunOut` is a type, not a proposition.)
+\func peanoEvaluates : runClass rtNone peanoClass bodyMethodName 2000 = rOk (rvValue four)
+  => idp
