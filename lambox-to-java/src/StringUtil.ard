@@ -95,14 +95,24 @@
 \func javaIdentPart (s : String) : String => javaIdentBytes s.bytes
 
 -- ---------------------------------------------------------------------------
--- Association lookup, once.
+-- Generic helpers, once.
 --
--- Four modules had a copy of this walk: the axiom table (JavaAxioms), the
--- environment and a `fix` class's methods (JavaValue), and a byte-keyed table
--- (Formal/NodePathUnique). arend-lib has no assoc-list lookup to borrow, so this
--- is the next best thing -- one of ours, generic in the key's `DecSet`, with the
--- per-use wrappers being one line each.
+-- Four modules had a copy of the association walk: the axiom table
+-- (JavaAxioms), the environment and a `fix` class's methods (Formal/JavaValue),
+-- and a byte-keyed table (Formal/NodePathUnique). arend-lib has no assoc-list
+-- lookup to borrow, so this is the next best thing -- one of ours, generic in
+-- the key's `DecSet`, with the per-use wrappers one line each.
 -- ---------------------------------------------------------------------------
+
+-- Indexing with a `Maybe` result: arend-lib's `!!` takes a `Fin`, and both
+-- semantics need the index that MAY be out of range (a field read in the Java
+-- fragment, `List.nth_error` in λ□'s). Its `drop` is likewise avoided there,
+-- since the length in its result type would put arithmetic into every rule that
+-- mentions it.
+\func nthArr {A : \Type} (n : Nat) (xs : Array A) : Maybe A \elim n, xs
+  | _, nil => nothing
+  | 0, x :: _ => just x
+  | suc n, _ :: xs => nthArr n xs
 
 -- The first element whose key matches, in order.
 \func lookupBy {K : DecSet} {A : \Type} (key : A -> K) (k : K) (xs : Array A) : Maybe A \elim xs

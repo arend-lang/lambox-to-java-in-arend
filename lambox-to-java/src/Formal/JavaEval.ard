@@ -3,8 +3,10 @@
 \import Data.Maybe
 \import Data.String
 \import JavaAst
+\import Formal.Res
 \import Formal.JavaValue
 \import Set
+\import StringUtil   -- nthArr, shared with λ□'s semantics
 
 -- =============================================================================
 -- Formal semantics of the Java fragment: a functional big-step evaluator.

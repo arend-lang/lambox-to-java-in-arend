@@ -4,6 +4,7 @@
 \import Data.Array (++ \as \infixr 5 ++A)
 \import Data.Maybe
 \import Data.String
+\import Formal.Res
 \import JavaAst
 \import Set
 \import StringUtil
@@ -36,10 +37,9 @@
 --   * ClightBigstep.v -- `outcome` is `StmtOut` below, Java-specialised.
 --   * CompCert `Events.v` `external_call` -- the model for `RtSpec`: the
 --     semantics QUANTIFIES over the runtime instead of defining it.
---   * Owens-Myreen-Kumar-Tan, "Functional Big-Step Semantics" (ESOP 2016) --
---     the clock discipline and `Res`'s timeout case.
---   * Charguéraud, "Pretty-Big-Step Semantics" (ESOP 2013) -- exceptions
---     duplicating every rule; `bindRes` is the functional answer, paid once.
+--   * Owens-Myreen-Kumar-Tan / Charguéraud -- the clock discipline and the
+--     propagation combinator; both live in `Formal/Res.ard`, which λ□'s runner
+--     shares.
 -- =============================================================================
 
 -- Every value the fragment can produce, and nothing else. Every static type in
@@ -98,25 +98,6 @@
 
 \func Env => Array (\Sigma JIdent Value)
 
--- ---------------------------------------------------------------------------
--- Results
---
--- `rStuck` ("the semantics does not define this") is deliberately distinct from
--- `rOutOfFuel` ("the clock ran out"): a differential test needs the difference,
--- since the first is a real disagreement with `java` and the second only a
--- budget that was too small.
--- ---------------------------------------------------------------------------
-
-\data Res (A : \Type)
-  | rOk A
-  | rStuck
-  | rOutOfFuel
-
-\func bindRes {A B : \Type} (r : Res A) (f : A -> Res B) : Res B \elim r
-  | rOk a => f a
-  | rStuck => rStuck
-  | rOutOfFuel => rOutOfFuel
-
 -- How an expression finished: with a value, or by throwing.
 \data ExprOut | eVal Value | eExc Value
 
@@ -133,17 +114,10 @@
 -- ---------------------------------------------------------------------------
 -- Small helpers.
 --
--- Indexing an array with a `Maybe` result is the only one arend-lib has no
--- equivalent for: its `!!` takes a `Fin`, and the index here comes from the AST
--- and may be out of range (that is the point -- see `jDataField`). The rest is
--- borrowed: the append is `Data.Array`'s, equality on `Nat` is `Set`'s `==`, and
--- the association walk is `StringUtil.lookupBy`.
+-- All borrowed: `nthArr` and the association walk from `StringUtil` (λ□'s
+-- semantics needs the same indexing, which is why it lives there and not here),
+-- the append from `Data.Array`, equality on `Nat` from `Set`.
 -- ---------------------------------------------------------------------------
-
-\func nthArr {A : \Type} (n : Nat) (xs : Array A) : Maybe A \elim n, xs
-  | _, nil => nothing
-  | 0, x :: _ => just x
-  | suc n, _ :: xs => nthArr n xs
 
 \func snocArr {A : \Type} (xs : Array A) (y : A) : Array A => xs ++A (y :: nil)
 

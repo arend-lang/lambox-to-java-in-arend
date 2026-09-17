@@ -1,0 +1,150 @@
+\import Arith.Nat
+\import Data.Bool
+\import Data.Maybe
+\import Data.String
+\import ExamplePeano
+\import Formal.JavaEval
+\import Formal.JavaValue
+\import Formal.LambdaBoxRun
+\import Formal.Res
+\import Formal.RtLong
+\import JavaAst
+\import LambdaBox
+\import Paths
+\import Set
+\import ToJava
+
+-- =============================================================================
+-- The two semantics agree: λ□'s value and the compiled Java's value correspond.
+--
+-- This is the executable half of a correctness claim. The full statement --
+-- "for EVERY well-formed program, `Eval` and `JEval` agree" -- is a theorem
+-- nobody has proved here. What this module does is check the statement's
+-- INSTANCES, by running both sides:
+--
+--   λ□     `Formal/LambdaBoxRun.evalT`   (an oracle for the `Eval` relation)
+--   Java   `compileClass` then `Formal/JavaEval.runClass`
+--
+-- and comparing the two values with `agrees`. Each check is `idp`, so
+-- typechecking this module IS the check, and it fails if either side is stuck,
+-- runs out of fuel, or produces something the other does not match.
+--
+-- WHAT IT CAN AND CANNOT COVER. Both sides have to be able to speak about the
+-- program, which rules out more than one might expect:
+--
+--   * a program with an AXIOM (any `prim_*` or `Nat.*` operation) is `rStuck` on
+--     the λ□ side by design -- the λ□ semantics says nothing about a constant
+--     with no body, while the backend hands it to `Rt.java`. So the arithmetic
+--     programs that exercise `RtSpec` cannot be checked here, and the Java-side
+--     runs in `Formal/JavaEvalRuns.ard` are what covers them.
+--   * a program whose `construct`/`case`/`proj` has no inductive DECLARATION is
+--     `rStuck` on the λ□ side too (the arity and propositionality checks need
+--     it), while the backend never looks. So the hand-written terms there,
+--     which carry no declarations, are Java-side only.
+--
+-- That leaves the declaration-carrying, axiom-free programs -- which is exactly
+-- `ExamplePeano`, plus terms built from its `Nat` declaration below. Narrow, and
+-- the narrowness is the finding: the first thing a real differential corpus
+-- needs is λ□ semantics for axioms, i.e. `Eval` extended with an oracle for the
+-- runtime the way the Java side has `RtSpec`.
+-- =============================================================================
+
+-- Do a λ□ value and a Java value denote the same thing?
+--
+-- FIRST-ORDER VALUES ONLY: a λ□ `lambda`/`fix` corresponds to a Java closure,
+-- and comparing those would mean comparing an open term with a captured
+-- environment. `false` for them is not a gap in the checks below -- every value
+-- compared there is data -- and it is the same restriction the harness works
+-- under, since what `run.py` compares is the PRINTED value.
+--
+-- Fuel, because the recursion goes through an array of fields; the branch this
+-- was modelled on (`valRelB`) did the same.
+\func agrees (n : Nat) (t : LBTerm) (v : Value) : Bool \elim n
+  | 0 => false
+  | suc n => \case t, v \with {
+    | box, vBox => true
+    -- λ□'s `prim` int is unbounded; the Java side is a `long`. They agree only
+    -- while the value is in range, which `wrap64` makes explicit rather than
+    -- assumed -- this is the int63 mismatch, at the one place it is observable.
+    | prim (primInt, i), vLong j => intEqB (wrap64 i) j
+    -- A constructor: same tag, same fields, pointwise. The fields include the
+    -- inductive parameters on both sides (constructor-block form on the λ□
+    -- side, every `construct` argument passed to `new Rt.Data` on the Java
+    -- side), so there is no offset to account for here.
+    | construct _ c args, vData tg fs => (c == tg) and agreesAll n args fs
+    | _, _ => false
+  }
+
+\func agreesAll (n : Nat) (ts : Array LBTerm) (vs : Array Value) : Bool \elim ts, vs
+  | nil, nil => true
+  | t :: ts, v :: vs => agrees n t v and agreesAll n ts vs
+  | _, _ => false
+
+-- Run a program through both semantics and compare. `false` covers every way
+-- this can fail to be an agreement, including either side not finishing.
+\func bothAgree (p : LBProgram) (fuel : Nat) : Bool =>
+  \case runProgram p fuel,
+        runClass rtLong (compileClass "Prog" p) bodyMethodName fuel \with {
+    | rOk t, rOk (rvValue v) => agrees fuel t v
+    | _, _ => false
+  }
+
+-- ---------------------------------------------------------------------------
+-- The instances.
+-- ---------------------------------------------------------------------------
+
+-- 1 + 3 on unary naturals: `fix`, `case`, `construct` and a `const` unfolding,
+-- which between them are every λ□ rule that fires without an axiom.
+\func peanoAgrees : bothAgree addProgram 2000 = true => idp
+
+-- A bare constructor value, with no computation at all: the corresponding pair
+-- is `suc (suc zero)` and `Data(1, {Data(1, {Data(0, {})})})`.
+\func twoProgram : LBProgram => (decls, suc' (suc' zero'))
+
+\func twoAgrees : bothAgree twoProgram 500 = true => idp
+
+-- A `case` that selects the second branch, so the agreement is about a value
+-- that came out of `iotaRed` on the λ□ side and out of a `?:` chain plus a
+-- field read on the Java side.
+\func natInd : InductiveId => \new InductiveId (\new Kername (mpFile nil) "Nat") 0
+
+\func predProgram : LBProgram =>
+  (decls, case natInd 0 (suc' (suc' zero'))
+            (((nil : Array BinderName), zero') ::
+             ((anon :: nil : Array BinderName), bvar 0) :: nil))
+
+\func predAgrees : bothAgree predProgram 500 = true => idp
+
+-- A primitive integer: the one place the int63 mismatch is observable, and
+-- `agrees` compares through `wrap64` because of it.
+\func litProgram : LBProgram => (nil, prim (primInt, 42))
+
+\func litAgrees : bothAgree litProgram 100 = true => idp
+
+-- AND A DISAGREEMENT, so the checks above are known to have teeth: `bothAgree`
+-- is `false` when the λ□ side cannot speak. `prim_add_int` is an axiom, so λ□
+-- says `rStuck` while the Java side happily computes 5 through
+-- `Rt.PRIM_ADD_LONG` -- the gap named in the header, pinned as a fact.
+\func axiomKn : Kername => \new Kername (mpFile nil) "prim_add_int"
+
+\func addAxiomProgram : LBProgram =>
+  ((axiomKn, constantDecl (\new ConstantBody nothing)) :: nil,
+   app (app (const axiomKn) (prim (primInt, 2))) (prim (primInt, 3)))
+
+\func axiomDisagrees : bothAgree addAxiomProgram 200 = false => idp
+
+\func axiomIsStuckInLambdaBox : runProgram addAxiomProgram 200 = rStuck => idp
+
+\func axiomRunsInJava
+  : runClass rtLong (compileClass "Prog" addAxiomProgram) bodyMethodName 200
+  = rOk (rvValue (vLong 5))
+  => idp
+
+-- And `agrees` itself is not constant-true: it rejects the right tag with the
+-- wrong fields, and a value of the wrong shape. Without these, every check
+-- above would hold for a relation that says yes to everything.
+\func agreesRejectsArity : agrees 20 (suc' zero') (vData 1 nil) = false => idp
+
+\func agreesRejectsShape : agrees 20 box (vLong 0) = false => idp
+
+\func agreesRejectsTag : agrees 20 zero' (vData 1 nil) = false => idp
