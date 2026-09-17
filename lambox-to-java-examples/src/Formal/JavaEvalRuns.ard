@@ -5,6 +5,7 @@
 \import ExamplePeano
 \import JavaAst
 \import Formal.JavaEval
+\import Formal.Res
 \import Formal.JavaValue
 \import Paths
 \import ToJava

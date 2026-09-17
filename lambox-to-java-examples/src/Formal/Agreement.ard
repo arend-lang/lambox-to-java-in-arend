@@ -148,3 +148,20 @@
 \func agreesRejectsShape : agrees 20 box (vLong 0) = false => idp
 
 \func agreesRejectsTag : agrees 20 zero' (vData 1 nil) = false => idp
+
+-- The `prim` clause, at the value where `wrap64` is not the identity: λ□ says
+-- 2^63 (its ints are unbounded), the JVM says -2^63, and they DO correspond --
+-- one bit pattern, two readings. `litAgrees` above cannot show this, since
+-- `wrap64 42` is 42; drop the `wrap64` from `agrees` and this line fails.
+--
+-- It is checked directly rather than through `bothAgree` because reaching that
+-- value needs arithmetic, i.e. an axiom, i.e. a λ□ side that is stuck -- the
+-- gap this module's header is about.
+-- ... and the two `Int`s really are different, so the wrap is load-bearing
+-- rather than decorative.
+\func int63TwoReadingsDiffer
+  : intEqB (pos 9223372036854775808) (neg 9223372036854775808) = false => idp
+
+\func agreesWrapsInt63
+  : agrees 20 (prim (primInt, 9223372036854775808)) (vLong (neg 9223372036854775808)) = true
+  => idp

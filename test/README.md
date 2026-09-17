@@ -150,12 +150,27 @@ for you, and are worth knowing because they all bit us first:
   stamps its dump definitions' NAMES. Stamping a comment is not enough: the
   file changes, the definition does not.
 
+## The formalization is checked separately
+
+`tools/check-formal.sh` typechecks everything under `Formal/` in both projects
+(~2-3 min). Nothing else does: no module of the translation imports `Formal.*`,
+which is what keeps a normal compile cheap, and the cost of that is that the
+semantics can rot unnoticed. Typechecking IS the checking there -- each run and
+each agreement is asserted by `idp` -- so a disagreement between λ□'s semantics
+and the Java fragment's is a type error, not a diff.
+
+It is not part of `run.py`/`golden.py` deliberately: those answer questions
+about the generated Java, this one answers a question about the specification,
+and the first run of this script found a module that had been broken by a
+refactor two commits earlier.
+
 ## Layout
 
     run.py         the driver: the matrix, the timing, the statuses, the table
     golden.py      the fast check: generated Java vs golden/, one Arend run
     golden/        committed expected output, one .java per program
     lib.sh         tool paths (hard-coded) + require_tool + run_cmd helpers
+    tools/check-formal.sh  typechecks the Formal/ modules in both projects
                    and AREND_DAEMON, the one daemon switch
     stages/        one script per backend: java.sh, ocaml.sh, c.sh, each
                    taking `gen|build|run` as its first argument
