@@ -3,7 +3,7 @@
 \import Data.Maybe
 \import Data.String
 \import JavaAst
-\import JavaValue
+\import Formal.JavaValue
 \import Set
 
 -- =============================================================================
@@ -13,7 +13,7 @@
 -- says of itself that it "is what a future semantics and correctness statement
 -- are given for". This module is that semantics. Nothing in the compiler imports
 -- it -- it is a specification, not a pass -- so a normal compile never
--- typechecks it (`arend arend.yaml JavaEval` does).
+-- typechecks it (`arend arend.yaml Formal.JavaEval` does).
 --
 -- WHY A FUNCTION AND NOT A RELATION. There is no upstream to transcribe: no
 -- existing formalisation is the semantics of THIS fragment (unlike the λ□ side,
@@ -29,8 +29,8 @@
 -- right (JLS 15.7), so none of Csem.v's reduction-context machinery is needed.
 --
 -- NO STORE, and hence no rule that depends on WHEN something is read: see the
--- header of JavaValue.ard. This is the semantic payoff of the local-class `fix`
--- and of `case` being an expression.
+-- header of Formal/JavaValue.ard. This is the semantic payoff of the local-class
+-- `fix` and of `case` being an expression.
 --
 -- WHAT IS AND IS NOT MODELLED. Every constructor of `JExpr`, `JStmt`, `JType`
 -- and `JMember` has a clause. The fragment is closed by construction -- the
@@ -41,7 +41,7 @@
 --   * `JavaPrint.ard` turns this AST into text and is TRUSTED, in the same sense
 --     as CompCert's `printClight.ml`. Its documented gap is that `litStr` is not
 --     escaped.
---   * `runtime/Rt.java` is a parameter, `RtSpec` (JavaValue.ard).
+--   * `runtime/Rt.java` is a parameter, `RtSpec` (JavaValue.ard, next to this).
 --
 -- THE OBSERVABLE of a generated program is the value its entry method returns
 -- (`compileBody`'s `body`, passed to `runClass` by name -- the fragment has no
@@ -363,8 +363,8 @@
 -- class, and the `RuntimeException` of an unimplemented axiom's stub.
 --
 -- A local class is looked up rather than built: `jLocalClass` bound the name to
--- the instance, and the instances are indistinguishable (JavaValue.ard, ONE
--- VALUE FOR THE CLASS AND ITS INSTANCES).
+-- the instance, and the instances are indistinguishable (JavaValue.ard, ONE VALUE
+-- FOR THE CLASS AND ITS INSTANCES).
 \func newObject (env : Env) (t : JType) (vs : Array Value) : Res ExprOut =>
   \case t \with {
     | tClass q => \case lookupVar env q \with {

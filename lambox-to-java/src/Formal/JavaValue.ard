@@ -11,7 +11,7 @@
 -- =============================================================================
 -- Runtime values, outcomes, and the runtime interface for the Java fragment.
 --
--- The bottom layer of the fragment's semantics: `JavaEval.ard` is the evaluator,
+-- The bottom layer of the fragment's semantics: `Formal/JavaEval.ard` is the evaluator,
 -- and it cannot hold this, because `RtSpec` is a parameter of every rule and
 -- `RtSpec` mentions `Value`.
 --
@@ -63,7 +63,7 @@
   -- because the instances are indistinguishable: the class has no fields, no
   -- constructor and no state, the captured locals are effectively final, and
   -- nothing in the fragment compares references. What a method call does with
-  -- it is the interesting half -- see `jInvoke` in JavaEval.ard.
+  -- it is the interesting half -- see `jInvoke` in Formal/JavaEval.ard.
   | vObj (cname : JQIdent)
          (methods : Array (\Sigma JIdent JIdent (Array JStmt)))
          (cenv : Array (\Sigma JIdent Value))
@@ -151,7 +151,7 @@
 
 -- Binding shadows by prepending, and lookup scans from the head, so the newest
 -- binding wins. Shadowing cannot actually happen in generated code (names are
--- unique by NodePathUnique.ard's lemma), which is a property of the GENERATOR;
+-- unique by Formal/NodePathUnique.ard's lemma), which is a property of the GENERATOR;
 -- the semantics does not rely on it.
 \func bindVar (env : Env) (x : JIdent) (v : Value) : Env => (x, v) :: env
 

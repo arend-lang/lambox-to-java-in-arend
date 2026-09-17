@@ -1,8 +1,8 @@
 -- The target language of the extractor: the small Java fragment `ToJava.ard`
 -- generates, as an AST rather than source text. It defines the subset we commit
--- to, it is what the semantics (`JavaEval.ard`, with `JavaValue.ard`) and any
--- correctness statement are given for, and it keeps spelling in one trusted
--- place (`JavaPrint.ard`).
+-- to, it is what the semantics (`Formal/JavaEval.ard`, with its `JavaValue.ard`)
+-- and any correctness statement are given for, and it keeps spelling in one
+-- trusted place (`JavaPrint.ard`).
 --
 -- SCOPE. Exactly what the generator emits: no arithmetic, comparison, loops,
 -- `if`, generics, interfaces, `void`, array types or entry point, and no modifier

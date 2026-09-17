@@ -24,7 +24,7 @@
 -- Adding a construct means adding a constructor; forgetting to render is a type
 -- error. What was left to prove is one lemma about one function -- `renderName`
 -- is injective, so two names are equal only if they come from the same node and
--- the same kind -- and `NodePathUnique.ard` proves it. Nothing imports that
+-- the same kind -- and `Formal/NodePathUnique.ard` proves it. Nothing imports that
 -- module, so it costs a normal compile nothing.
 --
 -- WHAT THE RENDERING GUARANTEES. `renderSel` emits a letter, and a selector that

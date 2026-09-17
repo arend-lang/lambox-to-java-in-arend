@@ -52,7 +52,7 @@
 --
 -- The quotient is split off into `natToStrStep` rather than tested by an inner
 -- `\case`, so that a proof about this recursion can `\elim` the quotient the same
--- way the definition does (see NodePathUnique.ard, which needs exactly that).
+-- way the definition does (see Formal/NodePathUnique.ard, which needs that).
 \func natToStrFuel (fuel n : Nat) : String \elim fuel
   | 0 => "0"
   | suc fuel => natToStrStep fuel (n Nat.div 10) (n Nat.mod 10)
@@ -99,8 +99,8 @@
 --
 -- Four modules had a copy of this walk: the axiom table (JavaAxioms), the
 -- environment and a `fix` class's methods (JavaValue), and a byte-keyed table
--- (NodePathUnique). arend-lib has no assoc-list lookup to borrow, so this is
--- the next best thing -- one of ours, generic in the key's `DecSet`, with the
+-- (Formal/NodePathUnique). arend-lib has no assoc-list lookup to borrow, so this
+-- is the next best thing -- one of ours, generic in the key's `DecSet`, with the
 -- per-use wrappers being one line each.
 -- ---------------------------------------------------------------------------
 

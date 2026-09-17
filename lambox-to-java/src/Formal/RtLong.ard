@@ -5,12 +5,12 @@
 \import Data.Maybe
 \import Data.String
 \import JavaAst
-\import JavaValue
+\import Formal.JavaValue
 \import Set
 \import StringUtil
 
 -- =============================================================================
--- One instance of `RtSpec` (JavaValue.ard): the `Long` runtime.
+-- One instance of `RtSpec` (Formal/JavaValue.ard): the `Long` runtime.
 --
 -- `JavaAxioms.ard` fixes the representation of λ□ primitive ints to
 -- `java.lang.Long` (`intLit`, `primOpSuffix`), so this is the instance the

@@ -37,7 +37,7 @@
 -- renderer uses, one case per selector.
 --
 -- Nothing imports this module, so a normal compile never typechecks it. To check
--- it, name it: `arend arend.yaml NodePathUnique` (about a second, once the
+-- it, name it: `arend arend.yaml Formal.NodePathUnique` (about a second, once the
 -- library is loaded).
 --
 -- Two Arend facts shape the code:

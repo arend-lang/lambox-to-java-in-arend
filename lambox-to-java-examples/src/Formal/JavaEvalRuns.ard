@@ -1,18 +1,19 @@
 \import Data.Maybe
 \import Data.String
 \import LambdaBox
-\import RtLong
+\import Formal.RtLong
 \import ExamplePeano
 \import JavaAst
-\import JavaEval
-\import JavaValue
+\import Formal.JavaEval
+\import Formal.JavaValue
 \import Paths
 \import ToJava
 
 -- =============================================================================
 -- The Java fragment's semantics, run on a compiled program.
 --
--- `JavaEval.ard` is executable on purpose (see its header). This is the first
+-- The compiler project's `Formal/JavaEval.ard` is executable on purpose (see its
+-- header). This is the first
 -- thing that executes it: λ□ program -> `compileClass` -> `runClass`, and the
 -- result compared with the value the harness expects from the REAL run of the
 -- same program (`test/corpora/handwritten/peano/meta`: `1(1(1(1(0))))`, i.e.
