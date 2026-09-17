@@ -92,7 +92,11 @@ COVER_EXTRA = {
 # (zero occurrences across all 68 programs), `fvar`, and an unguarded `fix` body.
 # `compileExpr`'s `proj` clause and `compileFixMethod`'s second clause are
 # therefore checked by nothing here; closing that needs a hand-written λ□ term,
-# not a wider corpus.
+# not a wider corpus. One now exists, but on the other side of the fence:
+# `ExampleJavaEval.ard` compiles a hand-written `proj` term and EVALUATES it with
+# the fragment's semantics (JavaEval.ard). That checks the generator against the
+# semantics, not against `javac`, so this gap is narrower than it was and not
+# closed.
 
 MARKER = re.compile(r"^===== (\S+) =====$")
 
