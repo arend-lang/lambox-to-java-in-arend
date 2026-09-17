@@ -83,6 +83,15 @@
   -- Throwing it is a `StmtOut`.
   | vExcObj (excClass : JQIdent) (msg : String)
 
+-- What a literal DENOTES. The value domain deliberately does not mention syntax
+-- -- a computed `long` is not a literal -- so this function is the whole of the
+-- boundary between the two, and the reason `Value` keeps three constructors
+-- where `JLit` has three kinds.
+\func litValue (l : JLit) : Value
+  | litStr s => vStr s
+  | litInt n => vInt n
+  | litLong i => vLong i
+
 \func Env => Array (\Sigma JIdent Value)
 
 -- ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@
 -- for the current examples. FUTURE WORK: an int63 representation normalizing mod
 -- 2^63, the only one provably agreeing with λ□'s evaluation; it must supply BOTH
 -- definitions below.
-\func intLit (i : Int) : JExpr => jCallStatic "Long.valueOf" (jLongLit i :: nil)
+\func intLit (i : Int) : JExpr => jCallStatic "Long.valueOf" (jLit (litLong i) :: nil)
 
 -- Suffix selecting the runtime's operation family (`Rt.PRIM_ADD_LONG`). MUST
 -- MATCH `intLit`: `Rt.java` also ships a `_INT` family, on `BigInteger`, and
@@ -121,13 +121,13 @@
 -- text, so a diagnostic cannot drift from the names that same path produces.
 
 \func rtUnbound (index : Nat) (path : Path) : JExpr =>
-  jCallStatic (runtimeQual ++ "unbound") (jIntLit index :: jStringLit (renderPath path) :: nil)
+  jCallStatic (runtimeQual ++ "unbound") (jLit (litInt index) :: jLit (litStr (renderPath path)) :: nil)
 
 \func rtFreeVar (name : String) (path : Path) : JExpr =>
-  jCallStatic (runtimeQual ++ "freeVar") (jStringLit name :: jStringLit (renderPath path) :: nil)
+  jCallStatic (runtimeQual ++ "freeVar") (jLit (litStr name) :: jLit (litStr (renderPath path)) :: nil)
 
 -- The final alternative of the ternary chain a `case` becomes. It takes the
 -- SCRUTINEE, not its tag, which is what lets the AST drop a read-the-tag node and
 -- keep tag reads confined to `jTagEq`.
 \func rtNoBranch (scrut : JExpr) (path : Path) : JExpr =>
-  jCallStatic (runtimeQual ++ "noBranch") (scrut :: jStringLit (renderPath path) :: nil)
+  jCallStatic (runtimeQual ++ "noBranch") (scrut :: jLit (litStr (renderPath path)) :: nil)

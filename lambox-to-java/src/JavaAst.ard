@@ -110,9 +110,20 @@
   -- `this` is the closure. NOT `jStatic "C.this"`, which prints identically:
   -- `jStatic` is resolved globally, this one in the enclosing class's scope.
   | jQualThis JQIdent
-  | jStringLit String  -- the printer quotes but does not escape
-  | jIntLit Nat  -- a constructor tag or a field index
-  | jLongLit Int  -- a `long` (`5L`) for λ□ `prim` ints; signed, so `Int`
+  -- A literal, of the three kinds the fragment has. ONE NODE, and the kinds in
+  -- a datatype of their own: every removed constructor is a removed case in the
+  -- printer, in a semantics and in every proof, and nothing about the fragment
+  -- distinguishes these three except how they print and what they denote.
+  | jLit JLit
+
+-- `litStr`: the printer quotes but does not escape (see JavaPrint.ard).
+-- `litInt`: a decimal `int` -- a constructor tag, a field index, a de Bruijn
+-- index in a diagnostic. `litLong`: a `long` (`5L`), λ□'s `prim` int, signed
+-- and hence `Int`.
+\data JLit
+  | litStr String
+  | litInt Nat
+  | litLong Int
 
 \data JStmt
   -- `final Object l3 = e;`. Always final and always initialized: a statement

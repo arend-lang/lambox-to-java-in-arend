@@ -29,7 +29,7 @@
 -- `jCond` chain prints on one line, broken only where an arm contains a
 -- `jClosure`, whose body is a block.
 --
--- NOT ESCAPED: `jStringLit` is emitted verbatim between quotes. Every string the
+-- NOT ESCAPED: `litStr` is emitted verbatim between quotes. Every string the
 -- generator puts there is a node path, a mangled identifier or a fixed message;
 -- if user-visible text ever reaches one, escaping belongs here.
 -- =============================================================================
@@ -43,6 +43,13 @@
 
 -- `ind` is the indentation of the line this expression is on; it matters only for
 -- `jClosure`, whose body occupies further lines.
+-- A literal's spelling: quoted for a string (NOT escaped, see above), decimal
+-- for an `int`, decimal with Java's `L` suffix for a `long`.
+\func printLit (l : JLit) : String
+  | litStr s => "\"" ++ s ++ "\""
+  | litInt n => natToStr n
+  | litLong i => intToStr i ++ "L"
+
 \func printExpr (ind : Nat) (e : JExpr) : String \elim e
   | jVar x => x
   | jStatic q => q
@@ -82,9 +89,7 @@
   | jCond c a b =>
     "(" ++ printExpr ind c ++ " ? " ++ printExpr ind a ++ " : " ++ printExpr ind b ++ ")"
   | jQualThis c => c ++ ".this"
-  | jStringLit s => "\"" ++ s ++ "\""
-  | jIntLit n => natToStr n
-  | jLongLit i => intToStr i ++ "L"
+  | jLit l => printLit l
 
 -- Every clause emits its own indentation and trailing newline, so a block is just
 -- the concatenation of its statements.

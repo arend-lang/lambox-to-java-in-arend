@@ -38,8 +38,8 @@
 -- outside this function, and is named:
 --
 --   * `JavaPrint.ard` turns this AST into text and is TRUSTED, in the same sense
---     as CompCert's `printClight.ml`. Its documented gap is that `jStringLit` is
---     not escaped.
+--     as CompCert's `printClight.ml`. Its documented gap is that `litStr` is not
+--     escaped.
 --   * `runtime/Rt.java` is a parameter, `RtSpec` (JavaValue.ard).
 --
 -- THE OBSERVABLE of a generated program is the value its entry method returns
@@ -120,10 +120,9 @@
   : Res ExprOut \elim n, e
   | 0, _ => rOutOfFuel
 
-  -- Literals (JLS 3.10) and the erased-value atom.
-  | suc _, jStringLit s => rOk (eVal (vStr s))
-  | suc _, jIntLit k => rOk (eVal (vInt k))
-  | suc _, jLongLit i => rOk (eVal (vLong i))
+  -- Literals (JLS 3.10) and the erased-value atom. One clause, since the AST has
+  -- one literal node; `litValue` is the whole of what a literal denotes.
+  | suc _, jLit l => rOk (eVal (litValue l))
   | suc _, jBox => rOk (eVal vBox)
 
   -- A local or a parameter. Unbound is `rStuck`: `javac` would reject the

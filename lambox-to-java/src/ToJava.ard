@@ -306,7 +306,7 @@
         | nothing =>
           constMethod name
             (jThrow (jNew (tClass "RuntimeException")
-                          (jStringLit ("axiom " ++ name ++ " not implemented") :: nil)) :: nil)
+                          (jLit (litStr ("axiom " ++ name ++ " not implemented")) :: nil)) :: nil)
       }
     }
     | inductiveDecl _ =>
