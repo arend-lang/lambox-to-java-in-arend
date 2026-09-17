@@ -135,3 +135,5 @@ timestamp	program	check	result	java_gen	ocaml_gen	c_gen	java_build	ocaml_build	c
 2026-09-16T13:26:15Z	peano	expected	ok	1.1	-	-	1.0	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
 2026-09-16T13:27:32Z	peano	expected	ok	19.2	-	-	1.1	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
 2026-09-16T13:28:04Z	peano	expected	ok	1.3	-	-	1.1	-	-	0.1	-	-	1(1(1(1(0))))	1(1(1(1(0))))
+2026-09-17T15:23:47Z	peano	expected	ok	39.2	-	-	2.1	-	-	0.2	-	-	1(1(1(1(0))))	1(1(1(1(0))))
+2026-09-17T15:23:47Z	leanbench-even	expected	ok	42.3	0.1	-	2.6	1.7	-	0.1	0.0	-	1	1
