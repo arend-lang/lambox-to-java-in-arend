@@ -49,9 +49,10 @@
 --
 -- `Nat.divMod` is a bodyless Prelude builtin and Arend computes `Nat`'s `+`,
 -- `-` and `*` natively on big literals, so these may be used freely at 2^64
--- scale. What must NOT be used is a hand-rolled comparison in the style of
--- `JavaValue.natEq`, which peels `suc` one at a time and would need 2^63 steps;
--- the sign test below goes through `Nat.-`, whose result is an `Int`.
+-- scale. What must NOT be used is a comparison that peels `suc` one at a time,
+-- as a hand-rolled `natEq` would (and as this file's ancestor warned about):
+-- that needs 2^63 steps here. The sign test below goes through `Nat.-`, whose
+-- result is an `Int`, and `intEqB` compares decimal renderings.
 -- ---------------------------------------------------------------------------
 
 \func pow2_63 : Nat => 9223372036854775808

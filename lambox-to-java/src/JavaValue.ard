@@ -1,8 +1,12 @@
 \import Data.Bool
+-- Only the append, and under an alias: importing Data.Array wholesale would
+-- shadow String's `++` (ToJava.ard aliases it for the same reason).
+\import Data.Array (++ \as \infixr 5 ++A)
 \import Data.Maybe
 \import Data.String
 \import JavaAst
 \import Set
+\import StringUtil
 
 -- =============================================================================
 -- Runtime values, outcomes, and the runtime interface for the Java fragment.
@@ -127,8 +131,13 @@
 \data StmtOut | oNormal Env | oReturn Value | oExcS Value
 
 -- ---------------------------------------------------------------------------
--- Small helpers. Spelled out rather than imported, so that no import shadows
--- String's `++` (LambdaBox.ard does the same).
+-- Small helpers.
+--
+-- Indexing an array with a `Maybe` result is the only one arend-lib has no
+-- equivalent for: its `!!` takes a `Fin`, and the index here comes from the AST
+-- and may be out of range (that is the point -- see `jDataField`). The rest is
+-- borrowed: the append is `Data.Array`'s, equality on `Nat` is `Set`'s `==`, and
+-- the association walk is `StringUtil.lookupBy`.
 -- ---------------------------------------------------------------------------
 
 \func nthArr {A : \Type} (n : Nat) (xs : Array A) : Maybe A \elim n, xs
@@ -136,22 +145,9 @@
   | 0, x :: _ => just x
   | suc n, _ :: xs => nthArr n xs
 
-\func snocArr {A : \Type} (xs : Array A) (y : A) : Array A \elim xs
-  | nil => y :: nil
-  | x :: xs => x :: snocArr xs y
+\func snocArr {A : \Type} (xs : Array A) (y : A) : Array A => xs ++A (y :: nil)
 
-\func natEq (m n : Nat) : Bool \elim m, n
-  | 0, 0 => true
-  | 0, suc _ => false
-  | suc _, 0 => false
-  | suc m, suc n => natEq m n
-
-\func lookupVar (env : Env) (x : JIdent) : Maybe Value \elim env
-  | nil => nothing
-  | e :: env => \case e.1 == x \with {
-    | true => just e.2
-    | false => lookupVar env x
-  }
+\func lookupVar (env : Env) (x : JIdent) : Maybe Value => lookupKey x env
 
 -- Binding shadows by prepending, and lookup scans from the head, so the newest
 -- binding wins. Shadowing cannot actually happen in generated code (names are
@@ -159,14 +155,12 @@
 -- the semantics does not rely on it.
 \func bindVar (env : Env) (x : JIdent) (v : Value) : Env => (x, v) :: env
 
--- Find a method of a `fix` local class by name.
+-- Find a method of a `fix` local class by name, and return its (parameter,
+-- body). A three-field entry, so it goes through `lookupBy` with a key function
+-- rather than the pair-shaped `lookupKey`.
 \func lookupClassMethod (ms : Array (\Sigma JIdent JIdent (Array JStmt))) (nm : JIdent)
-  : Maybe (\Sigma JIdent (Array JStmt)) \elim ms
-  | nil => nothing
-  | m :: ms => \case m.1 == nm \with {
-    | true => just (m.2, m.3)
-    | false => lookupClassMethod ms nm
-  }
+  : Maybe (\Sigma JIdent (Array JStmt)) =>
+  Maybe.map (\lam m => (m.2, m.3)) (lookupBy (\lam m => m.1) nm ms)
 
 -- ---------------------------------------------------------------------------
 -- The runtime interface

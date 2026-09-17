@@ -75,10 +75,7 @@
 
 -- Kername -> Java method name. Every source component is encoded at this one
 -- boundary; the fixed separators and leading `c_` are legal by construction.
-\func joinDirs (ds : Array String) : String \elim ds
-  | nil => ""
-  | d :: nil => javaIdentPart d
-  | d :: ds => javaIdentPart d ++ "_" ++ joinDirs ds
+\func joinDirs (ds : Array String) : String => joinStr "_" (map javaIdentPart ds)
 
 \func mangleModPath (mp : ModPath) : String \elim mp
   | mpFile dp => joinDirs dp

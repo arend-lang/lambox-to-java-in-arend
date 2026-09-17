@@ -202,12 +202,11 @@
   (119, tIndexed sWrap) ::    -- 'w'
   nil
 
-\func lookupByte {A : \Type} (b : Byte) (miss : A) (tbl : Array (\Sigma Byte A)) : A \elim tbl
-  | nil => miss
-  | e :: tbl => \case b == e.1 \with {
-    | true => e.2
-    | false => lookupByte b miss tbl
-  }
+-- `StringUtil.lookupKey` is the walk (it is generic in the key's `DecSet`, and
+-- `Byte` has one); this only supplies the miss case, since a parser needs a
+-- total function here.
+\func lookupByte {A : \Type} (b : Byte) (miss : A) (tbl : Array (\Sigma Byte A)) : A =>
+  maybe miss (\lam x => x) (lookupKey b tbl)
 
 \func tokOf (b : Byte) : Tok => lookupByte b tNone selTable
 

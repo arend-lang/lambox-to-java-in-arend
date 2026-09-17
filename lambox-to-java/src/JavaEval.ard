@@ -1,3 +1,4 @@
+\import Arith.Nat   -- the `DecSet Nat` instance behind `==` on tags and arities
 \import Data.Bool
 \import Data.Maybe
 \import Data.String
@@ -62,6 +63,8 @@
 -- `class P C`, Clight's `prog_defs`, Malfunction's global bindings).
 -- ---------------------------------------------------------------------------
 
+-- Not `StringUtil.lookupBy`: a member is a SUM (a method or a comment), so there
+-- is no key function to give it -- the pattern match is the filter.
 \func lookupMethodIn (ms : Array JMember) (nm : JIdent) : Maybe JMethod \elim ms
   | nil => nothing
   | jMethod m :: ms => \case JMethod.mName {m} == nm \with {
@@ -225,7 +228,7 @@
   | suc n, jTagEq d k =>
     bindRes (evalExpr rt cls n env d) (\lam o => \case o \with {
       | eExc ev => rOk (eExc ev)
-      | eVal (vData tg _) => rOk (eVal (vBool (natEq tg k)))
+      | eVal (vData tg _) => rOk (eVal (vBool (tg == k)))
       | eVal _ => rStuck
     })
 
@@ -290,7 +293,7 @@
     | vBuiltin nm got => \case builtinArity {rt} nm \with {
       | nothing => rStuck
       | just k => \case snocArr got a \with {
-        | got' => \case natEq got'.len k \with {
+        | got' => \case got'.len == k \with {
           | false => rOk (eVal (vBuiltin nm got'))
           | true => bindRes (builtinRun {rt} nm got') (\lam v => rOk (eVal v))
         }

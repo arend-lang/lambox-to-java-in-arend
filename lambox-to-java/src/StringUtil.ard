@@ -1,5 +1,9 @@
 \import Arith.Nat
+-- Only `Big`: importing Data.Array wholesale would shadow String's `++` with the
+-- array one (the same reason ToJava.ard aliases it).
+\import Data.Array (Big)
 \import Data.Bool
+\import Data.Maybe
 \import Data.String
 \import Set
 
@@ -16,10 +20,9 @@
 -- here: decimal rendering of numbers, joining/indenting of fragments.
 -- =============================================================================
 
--- Concatenate an array of String fragments (no separator).
-\func concatStr (xs : Array String) : String \elim xs
-  | nil => ""
-  | x :: xs => x ++ concatStr xs
+-- Concatenate an array of String fragments (no separator). `Data.Array.Big` is
+-- exactly this fold, so there is no recursion of our own here.
+\func concatStr (xs : Array String) : String => Big (++) "" xs
 
 -- Concatenate with a separator BETWEEN fragments (none after the last one).
 \func joinStr (sep : String) (xs : Array String) : String \elim xs
@@ -64,29 +67,19 @@
     | suc _ => natToStrFuel n n
   }
 
+-- `lo <= n <= hi`, through arend-lib's Bool-valued `<=` on Nat rather than the
+-- walk-the-range test this used to do (which compared `n` against every byte of
+-- every class in turn).
+\func inByteRange (lo hi n : Nat) : Bool =>
+  nat_<=-dec.nat_<=_Bool lo n and nat_<=-dec.nat_<=_Bool n hi
+
+\func isJavaIdentByte (n : Nat) : Bool =>
+  inByteRange 48 57 n or inByteRange 65 90 n or inByteRange 97 122 n or (n == 95)
+
 -- A collision-free encoding for source-language identifier bytes at the Java
 -- boundary. ASCII letters, digits and `_` stay readable. Every other byte is
 -- written as `$<decimal>$`; `$` itself is encoded too, so source text cannot
 -- imitate an escape. Non-ASCII UTF-8 is handled byte-for-byte in the same way.
-\func natRangeContains (start count n : Nat) : Bool \elim count
-  | 0 => false
-  | suc count => \case start == n \with {
-    | true => true
-    | false => natRangeContains (suc start) count n
-  }
-
-\func isJavaIdentByte (n : Nat) : Bool =>
-  \case natRangeContains 48 10 n \with {
-    | true => true
-    | false => \case natRangeContains 65 26 n \with {
-      | true => true
-      | false => \case natRangeContains 97 26 n \with {
-        | true => true
-        | false => n == 95
-      }
-    }
-  }
-
 \func oneByteString (b : Byte) : String =>
   \new String { | bytes => b :: nil }
 
@@ -100,6 +93,28 @@
     \in head ++ javaIdentBytes bs
 
 \func javaIdentPart (s : String) : String => javaIdentBytes s.bytes
+
+-- ---------------------------------------------------------------------------
+-- Association lookup, once.
+--
+-- Four modules had a copy of this walk: the axiom table (JavaAxioms), the
+-- environment and a `fix` class's methods (JavaValue), and a byte-keyed table
+-- (NodePathUnique). arend-lib has no assoc-list lookup to borrow, so this is
+-- the next best thing -- one of ours, generic in the key's `DecSet`, with the
+-- per-use wrappers being one line each.
+-- ---------------------------------------------------------------------------
+
+-- The first element whose key matches, in order.
+\func lookupBy {K : DecSet} {A : \Type} (key : A -> K) (k : K) (xs : Array A) : Maybe A \elim xs
+  | nil => nothing
+  | x :: xs => \case key x == k \with {
+    | true => just x
+    | false => lookupBy key k xs
+  }
+
+-- The common case: a table of (key, value) pairs.
+\func lookupKey {K : DecSet} {A : \Type} (k : K) (tbl : Array (\Sigma K A)) : Maybe A =>
+  Maybe.map (\lam e => e.2) (lookupBy (\lam e => e.1) k tbl)
 
 -- `neg zero` is DEFINITIONALLY `pos zero` (see Int's constructor condition in
 -- Prelude.ard), so the `neg 0` clause must agree with `pos 0`'s -- no "-".

@@ -100,17 +100,10 @@
       ("c__Eq__ndrec", fixed "EQ_REC") ::
       nil
 
--- Lookup by fully mangled kername, including its module path.
-\func lookupAxiom (name : String) (tbl : Array (\Sigma String JExpr)) : Maybe JExpr \elim tbl
-  | nil => nothing
-  | e :: tbl => \case e.1 == name \with {
-    | true => just e.2
-    | false => lookupAxiom name tbl
-  }
-
-
--- The entry point callers use, so the table stays internal to this file.
-\func axiomImpl (name : String) : Maybe JExpr => lookupAxiom name javaAxioms
+-- The entry point callers use, so the table stays internal to this file. Lookup
+-- is by FULLY MANGLED kername, module path included, and is `StringUtil`'s one
+-- association walk rather than a copy of it.
+\func axiomImpl (name : String) : Maybe JExpr => lookupKey name javaAxioms
 
 -- Three situations have no λ□ value: a `bvar` whose index exceeds the enclosing
 -- binders, an `fvar`, and a `case` whose scrutinee matches no branch. Erasure
