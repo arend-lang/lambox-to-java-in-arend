@@ -129,6 +129,16 @@
 
 \func predAgrees : bothAgree predProgram 500 = true => idp
 
+-- The other branch, which is a different reduction on both sides: `nthArr` at
+-- index 0, and an `iotaRed` with NO fields to substitute (`dropArr npars args`
+-- is empty), against the first arm of the `?:` chain rather than a later one.
+\func zeroCaseProgram : LBProgram =>
+  (decls, case natInd 0 zero'
+            (((nil : Array BinderName), suc' zero') ::
+             ((anon :: nil : Array BinderName), bvar 0) :: nil))
+
+\func zeroCaseAgrees : bothAgree zeroCaseProgram 500 = true => idp
+
 -- A primitive integer: the one place the int63 mismatch is observable, and
 -- `agrees` compares through `wrap64` because of it.
 \func litProgram : LBProgram => (nil, prim (primInt, 42))
