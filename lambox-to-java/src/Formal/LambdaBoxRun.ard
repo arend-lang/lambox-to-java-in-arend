@@ -20,12 +20,12 @@
 --
 -- The obligations this creates, and where they stand:
 --
---     evalT env n t = rOk v  ->  Eval env t v                     (soundness)
+--     evalT spec env n t = rOk v  ->  Eval spec env t v               (soundness)
 --         PROVED, `Formal/LambdaBoxSound.ard`. So a value this function
 --         computes is backed by a derivation of the transcribed relation, and
 --         an agreement checked against it is an agreement with the SPEC.
 --
---     Eval env t v           ->  \Sigma (n : Nat) (evalT env n t = rOk v)
+--     Eval spec env t v      ->  \Sigma (n : Nat) (evalT spec env n t = rOk v)
 --                                                               (completeness)
 --         OPEN. Until it is proved, `rStuck` means "this function found no
 --         rule", not "the relation derives nothing" -- so a stuck result is
@@ -40,9 +40,15 @@
 -- Fuel is the first `\elim` argument and strictly decreases at every recursive
 -- call, exactly as in `Formal/JavaEval.ard`. `rStuck` means "no rule applies",
 -- which for a closed, well-formed λ□ program means one of: a `bvar`/`fvar` (not
--- a value and not reducible), an AXIOM (a constant with no body -- the λ□
--- semantics says nothing about it, while the backend gives it a hand-written
--- Java implementation), or a missing/ill-formed declaration.
+-- a value and not reducible), an axiom THE ORACLE DOES NOT COVER (`axiomArity`
+-- is `nothing` for it, or `axiomRun` declined the arguments it was handed), or a
+-- missing/ill-formed declaration.
+--
+-- `spec` is that oracle, `LBSpec` from `Formal/LambdaBoxEval.ard`, and it is a
+-- parameter here for the same reason it is one there. It is threaded, never
+-- inspected: every clause below either passes it down or consults it through
+-- `axiomArity`/`axiomSat`/`axiomRun`. With `lbNone` this function is what it was
+-- before the oracle existed -- every axiom stuck.
 -- =============================================================================
 
 -- The relation states "the scrutinee evaluates to a constructor OF THIS
@@ -53,7 +59,8 @@
 \func indEq (a b : InductiveId) : Bool =>
   kernameEq a.indMutualBlock b.indMutualBlock and (a.indIdx == b.indIdx)
 
-\func evalT (env : GlobalDeclarations) (n : Nat) (t : LBTerm) : Res LBTerm \elim n, t
+\func evalT (spec : LBSpec) (env : GlobalDeclarations) (n : Nat) (t : LBTerm)
+  : Res LBTerm \elim n, t
   | 0, _ => rOutOfFuel
 
   -- The atoms: `evalAtomBox`, `evalAtomLambda`, `evalAtomFix`, `evalPrim`.
@@ -67,26 +74,30 @@
   | suc _, bvar _ => rStuck
   | suc _, fvar _ => rStuck
 
-  -- `evalDelta`. An axiom is `rStuck`, which is the honest report: the λ□
-  -- semantics does not define it.
+  -- `evalDelta`, and `evalAxiom` for a constant with no body: if the oracle
+  -- declares an arity the axiom is a VALUE, and if it does not, `rStuck` --
+  -- which stays the honest report, since then nothing defines it.
   | suc n, const kn => \case lookupConstant env kn \with {
     | nothing => rStuck
     | just cb => \case ConstantBody.cstBody {cb} \with {
-      | nothing => rStuck
-      | just body => evalT env n body
+      | nothing => \case axiomArity {spec} kn \with {
+        | nothing => rStuck
+        | just _ => rOk (const kn)
+      }
+      | just body => evalT spec env n body
     }
   }
 
   -- `evalZeta`.
   | suc n, letIn _ b0 b1 =>
-    bindRes (evalT env n b0) (\lam b0v => evalT env n (csubst b0v 0 b1))
+    bindRes (evalT spec env n b0) (\lam b0v => evalT spec env n (csubst b0v 0 b1))
 
   -- `evalBox` / `evalBeta` / `evalFix` / `evalAppCong`, in that order -- the
   -- argument is evaluated in every one of them, so it is evaluated once here,
   -- before the function's value is dispatched on.
   | suc n, app f a =>
-    bindRes (evalT env n f) (\lam fv =>
-    bindRes (evalT env n a) (\lam av => applyT env n fv av))
+    bindRes (evalT spec env n f) (\lam fv =>
+    bindRes (evalT spec env n a) (\lam av => applyT spec env n fv av))
 
   -- `evalConstruct`: saturated by construction, so evaluate the fields and
   -- rebuild. The arity check is the relation's `args.len = arity` premise.
@@ -95,14 +106,14 @@
       | nothing => rStuck
       | just arity => \case args.len == arity \with {
         | false => rStuck
-        | true => bindRes (evalArgsT env n args) (\lam vs => rOk (construct ind c vs))
+        | true => bindRes (evalArgsT spec env n args) (\lam vs => rOk (construct ind c vs))
       }
     }
 
   -- `evalIota`: to a constructor of THIS inductive, then select the branch,
   -- drop the parameters, substitute the fields.
   | suc n, case ind npars discr brs =>
-    bindRes (evalT env n discr) (\lam dv => \case dv \with {
+    bindRes (evalT spec env n discr) (\lam dv => \case dv \with {
       | construct ind' c args => \case constructorInfo env ind c \with {
         | just (false, npars', nargs) => \case nthArr c brs \with {
           | nothing => rStuck
@@ -110,7 +121,7 @@
                               and (args.len == npars Nat.+ nargs)
                               and ((dropArr npars args).len == (br.1).len) \with {
             | false => rStuck
-            | true => evalT env n (iotaRed npars args br)
+            | true => evalT spec env n (iotaRed npars args br)
           }
         }
         -- A propositional inductive, or no such constructor: no rule.
@@ -121,7 +132,7 @@
 
   -- `evalProj`: constructor 0 of a single-constructor block, field `npars+idx`.
   | suc n, proj p discr =>
-    bindRes (evalT env n discr) (\lam dv => \case dv \with {
+    bindRes (evalT spec env n discr) (\lam dv => \case dv \with {
       | construct ind' 0 args => \case constructorInfo env (ProjectionInfo.projIndType {p}) 0 \with {
         | just (false, npars, nargs) =>
           \case indEq ind' (ProjectionInfo.projIndType {p})
@@ -131,7 +142,7 @@
           | true => \case nthArr (ProjectionInfo.projParamCount {p}
                                   Nat.+ ProjectionInfo.projFieldIdx {p}) args \with {
             | nothing => rStuck
-            | just a => evalT env n a
+            | just a => evalT spec env n a
           }
         }
         | _ => rStuck
@@ -139,25 +150,46 @@
       | _ => rStuck
     })
 
--- The four `app` rules, once the function and the argument have values.
-\func applyT (env : GlobalDeclarations) (n : Nat) (fv av : LBTerm) : Res LBTerm \elim n
+-- The five `app` rules, once the function and the argument have values.
+\func applyT (spec : LBSpec) (env : GlobalDeclarations) (n : Nat) (fv av : LBTerm)
+  : Res LBTerm \elim n
   | 0 => rOutOfFuel
   | suc n => \case fv \with {
     -- `evalBox`: applying an erased value stays erased (the argument has been
     -- evaluated already, which is what makes `app` strict in both positions).
     | box => rOk box
     -- `evalBeta`.
-    | lambda _ b => evalT env n (csubst av 0 b)
+    | lambda _ b => evalT spec env n (csubst av 0 b)
     -- `evalFix`, unguarded: unfold on application, without inspecting `av`.
     | fix defs idx => \case cunfoldFix defs idx \with {
       | nothing => rStuck
-      | just (_, fn) => evalT env n (app fn av)
+      | just (_, fn) => evalT spec env n (app fn av)
     }
-    -- `evalAppCong`: a value applied to a value, when the value cannot start a
-    -- redex. `appCongOk` is the relation's premise, unchanged.
-    | f' => \case appCongOk f' \with {
-      | true => rOk (app f' av)
-      | false => rStuck
+    -- `evalAxiomApp` then `evalAppCong`, in that order and as ONE dispatch on
+    -- `axiomSat`, which is what keeps this function and the relation in step:
+    -- the relation's `evalAppCong` carries `axiomSat ... = nothing` as a
+    -- premise, so `nothing` here is exactly the case where that rule is
+    -- available.
+    --
+    -- A DECLINING ORACLE IS STUCK, never an `appCongOk` fallback. `axiomRun`
+    -- returning `nothing` on a saturated call means the runtime was handed
+    -- arguments it does not compute on (`builtinRunLong` on non-`vLong`s is the
+    -- Java twin, and it is `rStuck` there too). Falling through would make the
+    -- function accept what the relation rejects -- the saturated case is
+    -- excluded from `evalAppCong` unconditionally -- and soundness would fail.
+    --
+    -- `box`/`lambda`/`fix` above cannot reach here and need no exclusion:
+    -- `axiomSat` demands a `const` at the head of the spine, which none of them
+    -- is, so the rules stay disjoint.
+    | f' => \case axiomSat spec (app f' av) \with {
+      | just (kn, args) => \case axiomRun {spec} kn args \with {
+        | nothing => rStuck
+        | just v => rOk v
+      }
+      | nothing => \case appCongOk f' \with {
+        | true => rOk (app f' av)
+        | false => rStuck
+      }
     }
   }
 
@@ -168,14 +200,16 @@
 -- premise over `Fin args.len`, so a plain `Array LBTerm` here would owe a
 -- length lemma and a transport at exactly the place the proof of soundness
 -- (`Formal/LambdaBoxSound.ard`) needs to build that constructor.
-\func evalArgsT (env : GlobalDeclarations) (n : Nat) (xs : Array LBTerm) : Res (Array LBTerm xs.len)
+\func evalArgsT (spec : LBSpec) (env : GlobalDeclarations) (n : Nat) (xs : Array LBTerm)
+  : Res (Array LBTerm xs.len)
   \elim n, xs
   | 0, _ => rOutOfFuel
   | suc _, nil => rOk nil
   | suc n, x :: xs =>
-    bindRes (evalT env n x) (\lam v =>
-    bindRes (evalArgsT env n xs) (\lam vs => rOk (v :: vs)))
+    bindRes (evalT spec env n x) (\lam v =>
+    bindRes (evalArgsT spec env n xs) (\lam vs => rOk (v :: vs)))
 
 -- Running a program is evaluating its body in its declarations, as
 -- `EvalProgram` says for the relation.
-\func runProgram (p : LBProgram) (n : Nat) : Res LBTerm => evalT p.1 n p.2
+\func runProgram (spec : LBSpec) (p : LBProgram) (n : Nat) : Res LBTerm =>
+  evalT spec p.1 n p.2

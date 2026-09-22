@@ -1,0 +1,263 @@
+\import Arith.Nat
+-- Only `iabs`: importing `Arith.Int` wholesale would give a second `+` next to
+-- the `Nat.+` this module computes with.
+\import Arith.Int (iabs)
+\import Data.Bool
+\import Data.Maybe
+\import Data.String
+\import Formal.LambdaBoxEval
+\import LambdaBox
+\import Set
+\import StringUtil (intEqB, intToStr, natToStr)
+
+-- =============================================================================
+-- One instance of `LBSpec` (Formal/LambdaBoxEval.ard): what λ□'s axioms MEAN.
+--
+-- The mirror image of `JavaAxioms.ard`, which says what they COMPILE TO. Same
+-- table, read the other way: `javaAxioms` maps `c__Nat__add` to the runtime
+-- constant `Rt.PRIM_ADD_LONG`, and this module says that `Nat.add` denotes
+-- addition. Neither is derivable from the other -- that is the whole point of
+-- having both, because an agreement between them is a real check, and their
+-- DISAGREEMENTS are findings (see `int63` below).
+--
+-- ---------------------------------------------------------------------------
+-- THE SOURCE LANGUAGE'S ARITHMETIC, NOT THE JVM'S
+-- ---------------------------------------------------------------------------
+-- The temptation here is to define these the way `Formal/RtLong.ard` does, on
+-- 64-bit wrapping arithmetic, which would make every agreement check pass. That
+-- would be worthless: it bakes the backend's behaviour into the specification
+-- the backend is checked against, and the one mismatch this project has
+-- documented from the start would become invisible.
+--
+-- So each family is defined from ITS OWN source, and they do not agree with each
+-- other:
+--
+--   * `Nat.*` -- Lean's `Nat` is arbitrary-precision (GMP-backed at runtime, an
+--     unbounded inductive in the logic), so these are UNBOUNDED. `Nat.sub`
+--     truncates at zero, `Nat.div`/`Nat.mod` follow Lean's total conventions
+--     (division by zero is zero). This is the family the corpus actually uses:
+--     `lean-*` and `leanbench-*` reach machine-`Nat` primitives, and the
+--     `c__Nat__*` keys of `javaAxioms` are theirs.
+--
+--   * `prim_*_int` -- λ□'s primitive int is MetaRocq's `EPrimitive.v`
+--     `primIntModel (i : PrimInt63.int)`, i.e. `Uint63`: an UNSIGNED 63-bit
+--     integer with cyclic arithmetic (mod 2^63), matching lean-to-lambdabox's
+--     `PrimModel .primInt := BitVec 63` and the Rocq refman's `Uint63`. Hence
+--     `wrap63` below, and hence the int63/int64 gap `JavaAxioms.ard`'s header
+--     calls a KNOWN MISMATCH is now a gap between two written-down semantics
+--     rather than between one semantics and a comment.
+--
+-- `wrap63` is deliberately NOT shared with `Formal/RtLong.ard`'s `wrap64`, even
+-- though the two are the same shape. They are different specifications with
+-- different citations -- JLS 4.2.1/4.2.2 there, MetaRocq/Uint63 here -- and one
+-- generalized helper would hide exactly the difference these checks exist to
+-- expose. What IS shared is `intEqB`, which carries no specification (see its
+-- comment in `StringUtil.ard`).
+--
+-- ---------------------------------------------------------------------------
+-- NAMED GAPS, all deliberate and all `nothing`, hence `rStuck`
+-- ---------------------------------------------------------------------------
+--   * `Array.*` -- Lean's arrays are mutable and `@[extern]`; modelling them
+--     needs a store on this side, which λ□'s value domain (terms) has no room
+--     for. `Formal/RtLong.ard` omits them too.
+--   * `Nat.decEq`/`decLe`/`decLt`, `Eq.rec`/`Eq.ndrec` -- these return
+--     `Decidable`, whose constructors carry erased PROOFS, so the value depends
+--     on an inductive declaration this module would have to invent.
+--   * `Int.*` -- Lean's machine `Int` erases to the same λ□ primitive int as
+--     `Nat`, so these are expressible, but each needs its own convention
+--     (`ediv`/`emod` are Euclidean) and none of the corpus reaches them yet.
+--   * `Nat.pow` -- unbounded exponentiation is not a gap in meaning but a
+--     hazard in practice (`Nat.pow 2 64` is a literal this evaluator would
+--     build), so it is left out until a program needs it.
+-- Each is a name `javaAxioms` DOES realize, so each is a place the Java side can
+-- compute and this side cannot -- which is what `Formal/Agreement.ard` pins.
+-- =============================================================================
+
+\func pow2_63 : Nat => 9223372036854775808
+
+-- `x` reduced into [0, 2^63), the `Uint63` normal form.
+--
+-- UNSIGNED, unlike `wrap64`: there is no reinterpretation of the top half of
+-- the range as negative, because `PrimInt63.int` has no sign. That single
+-- difference is the int63/int64 mismatch, and `Formal/Agreement.ard` pins the
+-- value where it becomes observable.
+--
+-- The `neg` clause is `2^63 - (n mod 2^63)`, guarded on zero because
+-- `2^63 - 0` is `2^63`, not `0`; `neg 0` is DEFINITIONALLY `pos 0` (Prelude's
+-- constructor condition on `Int`), and the two clauses agree there.
+\func wrap63 (x : Int) : Nat \elim x
+  | pos n => n Nat.mod pow2_63
+  | neg n => \case n Nat.mod pow2_63 \with {
+    | 0 => 0
+    | suc k => iabs (pow2_63 Nat.- suc k)
+  }
+
+-- ---------------------------------------------------------------------------
+-- The values this oracle produces and consumes.
+-- ---------------------------------------------------------------------------
+
+-- λ□ has no boolean primitive: Lean's `Bool` is an ordinary two-constructor
+-- inductive, and `Bool.false`/`Bool.true` are constructors 0 and 1 of it (see
+-- any `Imported/Leanbench*.ard`: `ConstructorBody "Bool.false" 0` first). The
+-- tags therefore agree with `Formal/RtLong.ard`'s `mkBool`, which is why
+-- `agrees` can compare the two without knowing about either.
+--
+-- THE INDUCTIVE ID IS PART OF THE VALUE, and it has to be the program's own:
+-- `evalIota` checks that a scrutinee's constructor belongs to the inductive the
+-- `case` names, so a boolean built with the wrong id would compute and then be
+-- stuck at the `case` that reads it. This is the Lean frontend's root-module
+-- `Bool`; a program with a different one needs a different instance of `LBSpec`,
+-- which is what "the oracle is an assumption" means concretely.
+\func boolInd : InductiveId => \new InductiveId (\new Kername (mpFile nil) "Bool") 0
+
+\func lbBool (b : Bool) : LBTerm =>
+  construct boolInd (\case b \with { | true => 1 | false => 0 }) nil
+
+-- A primitive int, as both semantics' arguments and results are spelled.
+\func lbInt (i : Int) : LBTerm => prim (primInt, i)
+
+-- The natural an `Int` denotes, if it denotes one.
+--
+-- Three clauses rather than `pos`-and-a-catch-all: matching `pos` OBLIGES
+-- matching `neg`, because `neg 0` evaluates to `pos 0` (Prelude's constructor
+-- condition), and Arend rejects a catch-all that would hide the overlap. The
+-- same three clauses `intToStr` has, for the same reason.
+\func intAsNat (i : Int) : Maybe Nat \elim i
+  | pos n => just n
+  | neg 0 => just 0
+  | neg (suc _) => nothing
+
+-- The two arguments every axiom here takes, decoded. `nothing` covers both "not
+-- two arguments" and "not primitive ints", which are the same kind of failure:
+-- the runtime was handed something it does not compute on.
+\func twoInts (args : Array LBTerm) : Maybe (\Sigma Int Int) => \case args \with {
+  | prim (primInt, x) :: prim (primInt, y) :: nil => just (x, y)
+  | _ => nothing
+}
+
+-- ---------------------------------------------------------------------------
+-- The table.
+--
+-- Keyed by `Kername`, where `javaAxioms` is keyed by the MANGLED name -- the two
+-- correspond through `ToJava.ard`'s `mangleKername`, which turns
+-- `Kername (mpDot (mpFile nil) "Nat") "add"` into `c__Nat__add`. Keeping the
+-- structured name here rather than its mangling is what makes this module
+-- independent of the backend's naming.
+--
+-- Written as `kernameEq` chains rather than an association list, because
+-- `lookupKey` wants a `DecSet` and `Kername` is a record of a `ModPath` and an
+-- `Ident`; `Formal/RtLong.ard`'s `==` chains on `JIdent` are the same shape.
+-- ---------------------------------------------------------------------------
+
+\func natKn (name : String) : Kername => \new Kername (mpDot (mpFile nil) "Nat") name
+
+\func rootKn (name : String) : Kername => \new Kername (mpFile nil) name
+
+-- Every axiom below is binary, as `javaAxioms` realizes them: `Rt.java`'s
+-- `PRIM_*` and `NAT_*` constants all collect two arguments before computing.
+-- Writing the arity down is the same contract `RtSpec.builtinArity` states, and
+-- it is what `axiomSat` tests against.
+\func axiomArityLb (kn : Kername) : Maybe Nat =>
+  \case kernameEq kn (natKn "add") \with { | true => just 2 | false =>
+  \case kernameEq kn (natKn "mul") \with { | true => just 2 | false =>
+  \case kernameEq kn (natKn "sub") \with { | true => just 2 | false =>
+  \case kernameEq kn (natKn "div") \with { | true => just 2 | false =>
+  \case kernameEq kn (natKn "mod") \with { | true => just 2 | false =>
+  \case kernameEq kn (natKn "beq") \with { | true => just 2 | false =>
+  \case kernameEq kn (natKn "ble") \with { | true => just 2 | false =>
+  \case kernameEq kn (natKn "blt") \with { | true => just 2 | false =>
+  \case kernameEq kn (rootKn "prim_add_int") \with { | true => just 2 | false =>
+  \case kernameEq kn (rootKn "prim_sub_int") \with { | true => just 2 | false =>
+  \case kernameEq kn (rootKn "prim_mul_int") \with { | true => just 2 | false =>
+  \case kernameEq kn (rootKn "prim_eqb_int") \with { | true => just 2 | false =>
+    nothing } } } } } } } } } } } }
+
+-- `x <= y`, without peeling. `Nat.-` on two `Nat`s is truncating subtraction
+-- landing in `Int`, so the sign of `y - x` decides it; after truncation the
+-- negatives are exactly `neg (suc _)`, since `neg 0` is `pos 0`.
+\func natLeB (x y : Nat) : Bool => \case y Nat.- x \with {
+  | pos _ => true
+  | neg (suc _) => false
+}
+
+-- Lean's `Nat` operations, on unbounded naturals.
+--
+-- `Nat.div`/`Nat.mod` by zero are zero in Lean (`Nat.div_zero`, `Nat.mod_zero`
+-- are its own lemmas), and Arend's `Nat.div`/`Nat.mod` agree -- `Nat.divMod` is
+-- a Prelude builtin with the same convention -- so there is no guard here.
+\func natRun (op : String) (x y : Nat) : Maybe LBTerm =>
+  \case op == "add" \with { | true => just (lbInt (pos (x Nat.+ y))) | false =>
+  \case op == "mul" \with { | true => just (lbInt (pos (x Nat.* y))) | false =>
+  -- TRUNCATING, which is why `javaAxioms` sends it to `NAT_SUB_LONG` and not to
+  -- the wrapping `PRIM_SUB_LONG`. Arend's `Nat.-` truncates into `Int`, so the
+  -- negative case is clamped here.
+  \case op == "sub" \with { | true => just (lbInt (\case x Nat.- y \with {
+      | pos k => pos k
+      | neg (suc _) => 0
+    })) | false =>
+  \case op == "div" \with { | true => just (lbInt (pos (x Nat.div y))) | false =>
+  \case op == "mod" \with { | true => just (lbInt (pos (x Nat.mod y))) | false =>
+  \case op == "beq" \with { | true => just (lbBool (intEqB (pos x) (pos y))) | false =>
+  \case op == "ble" \with { | true => just (lbBool (natLeB x y)) | false =>
+  \case op == "blt" \with { | true => just (lbBool (natLeB (suc x) y)) | false =>
+    nothing } } } } } } } }
+
+-- The int63 family: cyclic mod 2^63, per `primIntModel`/`Uint63`.
+--
+-- Each operation normalizes its RESULT, and `prim_eqb_int` normalizes its
+-- arguments before comparing -- the same invariant discipline `builtinRunLong`
+-- keeps for `PRIM_EQB_LONG`, and for the same reason: a caller handing in an
+-- un-normalized literal must not change the answer.
+\func int63Run (op : String) (x y : Int) : Maybe LBTerm =>
+  \let | a => wrap63 x
+       | b => wrap63 y
+  \in
+  \case op == "prim_add_int" \with {
+    | true => just (lbInt (pos (wrap63 (pos (a Nat.+ b))))) | false =>
+  \case op == "prim_mul_int" \with {
+    | true => just (lbInt (pos (wrap63 (pos (a Nat.* b))))) | false =>
+  -- Subtraction is where UNSIGNED wrapping is visible: `1 - 2` is `2^63 - 1`,
+  -- not `-1`. `Nat.-` lands in `Int`, which `wrap63` takes directly.
+  \case op == "prim_sub_int" \with {
+    | true => just (lbInt (pos (wrap63 (a Nat.- b)))) | false =>
+  \case op == "prim_eqb_int" \with {
+    | true => just (lbBool (intEqB (pos a) (pos b))) | false =>
+    nothing } } } }
+
+-- Dispatch: a `Nat.*` name goes to `natRun` on the two arguments read as
+-- naturals, a `prim_*_int` name to `int63Run`. Both require their arguments to
+-- be primitive ints ALREADY EVALUATED, which `evalAxiomApp` guarantees: it tests
+-- the spine only after both parts of the application have values.
+--
+-- Anything else is `nothing`, i.e. `rStuck` -- including a `Nat.*` operation
+-- handed a non-integer, which is the twin of `builtinRunLong`'s `rStuck` on
+-- non-`vLong` arguments.
+\func axiomRunLb (kn : Kername) (args : Array LBTerm) : Maybe LBTerm =>
+  \case twoInts args \with {
+    | nothing => nothing
+    | just (x, y) => \case modPathEq kn.kerModPath (mpDot (mpFile nil) "Nat") \with {
+      -- Lean's `Nat`, at FULL PRECISION: there is no `wrap63` in this branch,
+      -- and that absence is the specification. A negative argument is ill-typed
+      -- input to a `Nat` operation, so it is `nothing` rather than being
+      -- silently reinterpreted.
+      | true => \case intAsNat x, intAsNat y \with {
+        | just a, just b => natRun kn.kerName a b
+        | _, _ => nothing
+      }
+      -- The int63 family, which normalizes its arguments instead of rejecting
+      -- them: every `Int` denotes a `Uint63`.
+      | false => \case modPathEq kn.kerModPath (mpFile nil) \with {
+        | true => int63Run kn.kerName x y
+        | false => nothing
+      }
+    }
+  }
+
+-- The instance the agreement checks run against.
+--
+-- `lbNone` (Formal/LambdaBoxEval.ard) is the other one: no axiom at all, i.e.
+-- λ□ as MetaRocq and CertiRocq have it. The pair is the λ□-side counterpart of
+-- `rtLong`/`rtNone`.
+\func lbAxioms : LBSpec \cowith
+  | axiomArity => axiomArityLb
+  | axiomRun => axiomRunLb

@@ -89,12 +89,6 @@
 \func mkBool (b : Bool) : Value =>
   vData (\case b \with { | true => 1 | false => 0 }) nil
 
--- Decidable equality on `Int` via the canonical decimal form. `intToStr` is
--- total and injective on `Int` (`neg 0` and `pos 0` both render "0", which is
--- right: they are definitionally equal), so this is a genuine decision
--- procedure and avoids hand-rolling a comparison over the `pos`/`neg` split.
-\func intEqB (a b : Int) : Bool => intToStr a == intToStr b
-
 -- The arity contract. Every one of these is binary in `Rt.java`, reached as
 -- `Fn -> Fn -> result`. Writing it down IS the fix for the `Rt.curry` class of
 -- bug: that bug was a collector advertising an arity it did not need, and it was

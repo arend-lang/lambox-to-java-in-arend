@@ -18,7 +18,7 @@
 -- =============================================================================
 -- The oracle is sound: whatever `evalT` computes, the relation derives.
 --
---     evalT env n t = rOk v  ->  Eval env t v
+--     evalT spec env n t = rOk v  ->  Eval spec env t v
 --
 -- This is the first of the two obligations `Formal/LambdaBoxRun.ard` states,
 -- and the one that matters for the agreement checks: it turns every `bothAgree`
@@ -119,23 +119,23 @@
 -- The pointwise premise of `evalConstruct`, one step. A definition of its own
 -- rather than a `\case` inside the caller's `\let`: the elaborator handles the
 -- eliminated index cleanly here and reports an unsolvable `Fin` mismatch there.
-\func consPointwise {env : GlobalDeclarations} (x xv : LBTerm) (xs : Array LBTerm)
+\func consPointwise (spec : LBSpec) {env : GlobalDeclarations} (x xv : LBTerm) (xs : Array LBTerm)
                     (xvs : Array LBTerm xs.len)
-                    (e : Eval env x xv) (es : \Pi (i : Fin xs.len) -> Eval env (xs i) (xvs i))
+                    (e : Eval spec env x xv) (es : \Pi (i : Fin xs.len) -> Eval spec env (xs i) (xvs i))
                     (i : Fin (suc xs.len))
-  : Eval env ((x :: xs) i) ((xv :: xvs) i) \elim i
+  : Eval spec env ((x :: xs) i) ((xv :: xvs) i) \elim i
   | 0 => e
   | suc j => es j
 
 -- ---------------------------------------------------------------------------
 -- Soundness, by induction on fuel.
 --
--- `\elim n, t` in the oracle's own clause order, so that `evalT env n t`
+-- `\elim n, t` in the oracle's own clause order, so that `evalT spec env n t`
 -- reduces in each case and `p` is an equation about the clause's body.
 -- ---------------------------------------------------------------------------
 
-\func evalT-sound {env : GlobalDeclarations} (n : Nat) {t v : LBTerm}
-                  (p : evalT env n t = rOk v) : Eval env t v \elim n, t
+\func evalT-sound (spec : LBSpec) {env : GlobalDeclarations} (n : Nat) {t v : LBTerm}
+                  (p : evalT spec env n t = rOk v) : Eval spec env t v \elim n, t
   | 0, _ => absurd (fuel/=ok p)
 
   -- The atoms: the oracle returned the term itself, and the rule says the value
@@ -150,27 +150,34 @@
   | suc _, fvar _ => absurd (stuck/=ok p)
 
   -- `evalDelta`: the two lookups the oracle made ARE the rule's two premises.
+  -- With no body there is a third lookup and a second rule, `evalAxiom`: the
+  -- three tests the oracle made in order are the three premises it asks for.
   | suc n, const kn =>
     \case lookupConstant env kn \as lc, idp : lookupConstant env kn = lc \with {
       | nothing, q => rewrite q at p $ absurd (stuck/=ok p)
       | just cb, q => rewrite q at p $
         \case ConstantBody.cstBody {cb} \as body?, idp : ConstantBody.cstBody {cb} = body? \with {
-          | nothing, q2 => rewrite q2 at p $ absurd (stuck/=ok p)
-          | just body, q2 => evalDelta q q2 (evalT-sound n (rewrite q2 at p $ p))
+          | nothing, q2 => rewrite q2 at p $
+            \case axiomArity {spec} kn \as ar, idp : axiomArity {spec} kn = ar \with {
+              -- An axiom the oracle does not know: stuck, and no rule to derive.
+              | nothing, q3 => rewrite q3 at p $ absurd (stuck/=ok p)
+              | just arity, q3 => rewrite q3 at p $ evalAxiom q q2 q3 (inv (rOk-inj p))
+            }
+          | just body, q2 => evalDelta q q2 (evalT-sound spec n (rewrite q2 at p $ p))
         }
     }
 
   -- `evalZeta`: the sequencing is the rule's two premises, in order.
   | suc n, letIn na b0 b1 =>
-    \let q => bindRes-inv (evalT env n b0) p
-    \in evalZeta (evalT-sound n q.2) (evalT-sound n q.3)
+    \let q => bindRes-inv (evalT spec env n b0) p
+    \in evalZeta (evalT-sound spec n q.2) (evalT-sound spec n q.3)
 
   -- The four application rules are `applyT`'s business; here we only supply the
   -- derivations for the function and the argument.
   | suc n, app f a =>
-    \let | q => bindRes-inv (evalT env n f) p
-         | r => bindRes-inv (evalT env n a) q.3
-    \in applyT-sound n (evalT-sound n q.2) (evalT-sound n r.2) r.3
+    \let | q => bindRes-inv (evalT spec env n f) p
+         | r => bindRes-inv (evalT spec env n a) q.3
+    \in applyT-sound spec n (evalT-sound spec n q.2) (evalT-sound spec n r.2) r.3
   -- `evalConstruct`: the arity lookup and the length test are the rule's first
   -- two premises, the recursive call its pointwise one.
   | suc n, construct ind c args =>
@@ -180,9 +187,9 @@
         \case (args.len == arity) \as b, idp : (args.len == arity) = b \with {
           | false, q2 => rewrite q2 at p $ absurd (stuck/=ok p)
           | true, q2 => rewrite q2 at p $
-            \case bindRes-inv {Array LBTerm args.len} (evalArgsT env n args) p \with {
+            \case bindRes-inv {Array LBTerm args.len} (evalArgsT spec env n args) p \with {
               | (vs, e1, e2) =>
-                evalConstruct q (fromEqB q2) (evalArgsT-sound n args vs e1) (inv (rOk-inj e2))
+                evalConstruct q (fromEqB q2) (evalArgsT-sound spec n args vs e1) (inv (rOk-inj e2))
             }
         }
     }
@@ -190,7 +197,7 @@
   -- and `indEq-eq` is what turns its identity check back into the equation the
   -- rule states by SHARING the variable `ind`.
   | suc n, case ind npars discr brs =>
-    \case bindRes-inv (evalT env n discr) p \with {
+    \case bindRes-inv (evalT spec env n discr) p \with {
       | (dv, e1, e2) => \case \elim dv, \elim e1, \elim e2 \with {
         | construct ind' c cargs, e1, e2 =>
           \case constructorInfo env ind c \as ci, idp : constructorInfo env ind c = ci \with {
@@ -210,8 +217,8 @@
                         | (q4, c4) => \case and.toSigma q4 \with {
                           | (q5, c3) => \case and.toSigma q5 \with {
                             | (c1, c2) =>
-                              evalIota (transport (\lam ii => Eval env discr (construct ii c cargs))
-                                                  (indEq-eq c1) (evalT-sound n e1))
+                              evalIota (transport (\lam ii => Eval spec env discr (construct ii c cargs))
+                                                  (indEq-eq c1) (evalT-sound spec n e1))
                                        -- an explicit motive, because `rewrite`
                                        -- here would also hit the rule's still
                                        -- unsolved `nargs` and unify it with
@@ -222,7 +229,7 @@
                                        q2
                                        (fromEqB c3)
                                        (fromEqB c4)
-                                       (evalT-sound n e2)
+                                       (evalT-sound spec n e2)
                           }
                         }
                       }
@@ -246,7 +253,7 @@
   -- `evalProj`, the same shape with three premises and the constructor index
   -- pinned to 0 (a projection is out of a single-constructor block).
   | suc n, proj pi discr =>
-    \case bindRes-inv (evalT env n discr) p \with {
+    \case bindRes-inv (evalT spec env n discr) p \with {
       | (dv, e1, e2) => \case \elim dv, \elim e1, \elim e2 \with {
         | construct ind' 0 cargs, e1, e2 =>
           \case constructorInfo env (ProjectionInfo.projIndType {pi}) 0 \as ci,
@@ -271,8 +278,8 @@
                       \case and.toSigma q2 \with {
                         | (q4, c3) => \case and.toSigma q4 \with {
                           | (c1, c2) =>
-                            evalProj (transport (\lam ii => Eval env discr (construct ii 0 cargs))
-                                                (indEq-eq c1) (evalT-sound n e1))
+                            evalProj (transport (\lam ii => Eval spec env discr (construct ii 0 cargs))
+                                                (indEq-eq c1) (evalT-sound spec n e1))
                                      (transport (\lam x => constructorInfo env
                                                              (ProjectionInfo.projIndType {pi}) 0
                                                            = just (false, x, na))
@@ -280,7 +287,7 @@
                                      (transport (\lam x => cargs.len = x Nat.+ na)
                                                 (fromEqB c2) (fromEqB c3))
                                      q3
-                                     (evalT-sound n e2)
+                                     (evalT-sound spec n e2)
                         }
                       }
                   }
@@ -302,35 +309,69 @@
     }
 
 -- The application rules, given derivations for the two halves.
-\func applyT-sound {env : GlobalDeclarations} (n : Nat) {f a fv av v : LBTerm}
-                   (ef : Eval env f fv) (ea : Eval env a av)
-                   (p : applyT env n fv av = rOk v) : Eval env (app f a) v \elim n
+\func applyT-sound (spec : LBSpec) {env : GlobalDeclarations} (n : Nat) {f a fv av v : LBTerm}
+                   (ef : Eval spec env f fv) (ea : Eval spec env a av)
+                   (p : applyT spec env n fv av = rOk v) : Eval spec env (app f a) v \elim n
   | 0 => absurd (fuel/=ok p)
   | suc n => \case \elim fv, \elim ef, \elim p \with {
     -- `evalBox`.
     | box, ef, p => evalBox (inv (rOk-inj p)) ef ea
     -- `evalBeta`.
-    | lambda na b, ef, p => evalBeta ef ea (evalT-sound n p)
+    | lambda na b, ef, p => evalBeta ef ea (evalT-sound spec n p)
     -- `evalFix`, unguarded.
     | fix defs idx, ef, p =>
       \case cunfoldFix defs idx \as cu, idp : cunfoldFix defs idx = cu \with {
         | nothing, q => rewrite q at p $ absurd (stuck/=ok p)
-        | just (narg, fn), q => rewrite q at p $ evalFix ef q ea (evalT-sound n p)
+        | just (narg, fn), q => rewrite q at p $ evalFix ef q ea (evalT-sound spec n p)
       }
     -- `evalAppCong`, where the oracle's `appCongOk` test is the rule's premise.
     -- For most values it computes to `true` outright; for an application it
     -- depends on the spine, and for the two that can start a redex it is
     -- `false`, so there is nothing to derive.
-    | bvar k, ef, p => evalAppCong ef idp ea (inv (rOk-inj p))
-    | fvar x, ef, p => evalAppCong ef idp ea (inv (rOk-inj p))
-    | letIn na b0 b1, ef, p => evalAppCong ef idp ea (inv (rOk-inj p))
-    | const kn, ef, p => evalAppCong ef idp ea (inv (rOk-inj p))
-    | case ind npars discr brs, ef, p => evalAppCong ef idp ea (inv (rOk-inj p))
-    | proj pi discr, ef, p => evalAppCong ef idp ea (inv (rOk-inj p))
+    -- FOR THESE FIVE THE ORACLE'S EXCLUSION IS `idp`. `axiomSat` demands a
+    -- `const` at the head of the application spine, and none of these is one or
+    -- has one, so `axiomSpine` reduces to `nothing` without knowing anything
+    -- about `spec` -- the runner's dispatch takes its `nothing` branch by
+    -- computation, and `evalAppCong`'s new premise is discharged the same way.
+    | bvar k, ef, p => evalAppCong ef idp ea idp (inv (rOk-inj p))
+    | fvar x, ef, p => evalAppCong ef idp ea idp (inv (rOk-inj p))
+    | letIn na b0 b1, ef, p => evalAppCong ef idp ea idp (inv (rOk-inj p))
+    | case ind npars discr brs, ef, p => evalAppCong ef idp ea idp (inv (rOk-inj p))
+    | proj pi discr, ef, p => evalAppCong ef idp ea idp (inv (rOk-inj p))
+
+    -- THE TWO SHAPES A SATURATED AXIOM CALL CAN HAVE: the function value is the
+    -- axiom itself (a unary one, applied here), or an application still
+    -- collecting arguments whose spine head is the axiom. Both go through the
+    -- same three steps as the runner -- is it saturated, did the oracle compute,
+    -- and is what it computed the value we were given.
+    | const kn, ef, p =>
+      \case axiomSat spec (app (const kn) av) \as sat,
+            idp : axiomSat spec (app (const kn) av) = sat \with {
+        | nothing, q => rewrite q at p $ evalAppCong ef idp ea q (inv (rOk-inj p))
+        | just (kn', args), q => rewrite q at p $
+          \case axiomRun {spec} kn' args \as r, idp : axiomRun {spec} kn' args = r \with {
+            -- The oracle declined: stuck, and `evalAppCong` is NOT available
+            -- (its premise wants `axiomSat = nothing`, and `q` says otherwise),
+            -- which is the asymmetry the runner's comment is about.
+            | nothing, q2 => rewrite q2 at p $ absurd (stuck/=ok p)
+            | just w, q2 => evalAxiomApp kn' args ef ea q
+                                         (q2 *> pmap just (rOk-inj (rewrite q2 at p $ p)))
+          }
+      }
     | app g b, ef, p =>
-      \case appCongOkSpine g \as sp, idp : appCongOkSpine g = sp \with {
-        | false, q => rewrite q at p $ absurd (stuck/=ok p)
-        | true, q => rewrite q at p $ evalAppCong ef q ea (inv (rOk-inj p))
+      \case axiomSat spec (app (app g b) av) \as sat,
+            idp : axiomSat spec (app (app g b) av) = sat \with {
+        | just (kn, args), q => rewrite q at p $
+          \case axiomRun {spec} kn args \as r, idp : axiomRun {spec} kn args = r \with {
+            | nothing, q2 => rewrite q2 at p $ absurd (stuck/=ok p)
+            | just w, q2 => evalAxiomApp kn args ef ea q
+                                         (q2 *> pmap just (rOk-inj (rewrite q2 at p $ p)))
+          }
+        | nothing, q => rewrite q at p $
+          \case appCongOkSpine g \as sp, idp : appCongOkSpine g = sp \with {
+            | false, q2 => rewrite q2 at p $ absurd (stuck/=ok p)
+            | true, q2 => rewrite q2 at p $ evalAppCong ef q2 ea q (inv (rOk-inj p))
+          }
       }
     | construct ind c cargs, ef, p => absurd (stuck/=ok p)
     | prim pv, ef, p => absurd (stuck/=ok p)
@@ -341,23 +382,23 @@
 -- `xs` and `vs` are EXPLICIT: left implicit, the elaborator has to solve an
 -- array from `Fin xs.len` in the result type, which is higher-order, and it
 -- reports the failure as a mismatch between two identical-looking `Fin`s.
-\func evalArgsT-sound {env : GlobalDeclarations} (n : Nat) (xs : Array LBTerm)
-                      (vs : Array LBTerm xs.len) (p : evalArgsT env n xs = rOk vs)
-  : \Pi (i : Fin xs.len) -> Eval env (xs i) (vs i) \elim n, xs
+\func evalArgsT-sound (spec : LBSpec) {env : GlobalDeclarations} (n : Nat) (xs : Array LBTerm)
+                      (vs : Array LBTerm xs.len) (p : evalArgsT spec env n xs = rOk vs)
+  : \Pi (i : Fin xs.len) -> Eval spec env (xs i) (vs i) \elim n, xs
   | 0, _ => absurd (fuel/=ok p)
   | suc n, nil => \lam i => \case i
   -- `m` is the FUEL; the array's tail length is its own variable.
   | suc m, x :: xs =>
-    \case bindRes-inv (evalT env m x) p \with {
-      | (xv, e1, e2) => \case bindRes-inv {Array LBTerm xs.len} (evalArgsT env m xs) e2 \with {
+    \case bindRes-inv (evalT spec env m x) p \with {
+      | (xv, e1, e2) => \case bindRes-inv {Array LBTerm xs.len} (evalArgsT spec env m xs) e2 \with {
         | (xvs, e3, e4) =>
           -- The equation is used POINTWISE (`pmap (__ i)`) rather than by
           -- rewriting the array inside the `\Pi`: abstracting an array under a
           -- binder leaves the elaborator comparing two `Fin`s it prints
           -- identically and cannot unify.
-          \lam i => transport (Eval env ((x :: xs) i))
+          \lam i => transport (Eval spec env ((x :: xs) i))
                               (pmap (\lam (w : Array LBTerm (suc xs.len)) => w i) (rOk-inj e4))
-                              (consPointwise x xv xs xvs (evalT-sound m e1)
-                                             (evalArgsT-sound m xs xvs e3) i)
+                              (consPointwise spec x xv xs xvs (evalT-sound spec m e1)
+                                             (evalArgsT-sound spec m xs xvs e3) i)
       }
     }

@@ -132,3 +132,18 @@
   | pos n => natToStr n
   | neg 0 => natToStr 0
   | neg (suc n) => "-" ++ natToStr (suc n)
+
+-- Decidable equality on `Int`, via the canonical decimal form above.
+--
+-- `intToStr` is total and injective on `Int` (`neg 0` and `pos 0` both render
+-- "0", which is right: they are definitionally equal), so this is a genuine
+-- decision procedure -- and it avoids both hand-rolling a comparison over the
+-- `pos`/`neg` split and, more importantly, any comparison that peels `suc` one
+-- at a time. Both semantics compare integers at 2^63 scale, where peeling does
+-- not terminate in practice.
+--
+-- HERE rather than in either semantics because both need it and it carries no
+-- specification of its own: `Formal/RtLong.ard` (the JVM's `long`) and
+-- `Formal/LbAxioms.ard` (λ□'s int63) disagree about what the integers MEAN, but
+-- not about when two of them are equal.
+\func intEqB (a b : Int) : Bool => intToStr a == intToStr b
