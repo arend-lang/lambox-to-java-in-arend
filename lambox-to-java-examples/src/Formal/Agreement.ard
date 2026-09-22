@@ -203,9 +203,34 @@
 -- what this module used to pin as a fact.
 \func axiomStuckWithoutOracle : runProgram lbNone addAxiomProgram 200 = rStuck => idp
 
--- Lean's machine `Nat`, which is what the corpus actually reaches: `Nat.add`
--- mangles to `c__Nat__add` and so lands on `Rt.PRIM_ADD_LONG`, while λ□ reads it
--- as unbounded addition. This is the family that unblocks `leanbench-*`.
+-- Lean's machine `Nat`, which is the family the corpus actually reaches:
+-- `Nat.add` mangles to `c__Nat__add` and so lands on `Rt.PRIM_ADD_LONG`, while
+-- λ□ reads it as unbounded addition.
+--
+-- HOW MUCH OF THE CORPUS THIS IS, counted rather than guessed. Across
+-- `Imported/Leanbench*.ard` the bodyless constants are 132 occurrences:
+--   covered by BOTH oracles   `Nat.add` 18, `Nat.sub` 23, `Nat.mul` 4,
+--                             `Nat.beq` 21                              (66)
+--   λ□ only (`rtLong` gap)    `Nat.div` 3, `Nat.mod` 7, `Nat.ble` 3     (13)
+--   neither                   `Nat.decEq` 14, `Nat.decLt` 7,
+--                             `Nat.decLe` 5, `Nat.pow` 2, `Array.*` 17,
+--                             `Int.*` 8, `Eq.rec` 1                     (53)
+-- So `leanbench-even`, whose only axioms are `Nat.beq` and `Nat.sub`, is inside
+-- the intersection, while the `qsort`/`rbmap` family needs the
+-- `Decidable`-returning comparisons and is not.
+--
+-- THAT DOES NOT MEAN THE BENCHMARK CAN BE CHECKED HERE. Running `program` from
+-- `Imported/LeanbenchEven.ard` through `bothAgree` exhausts the JVM heap inside
+-- Arend's normalizer (`OutOfMemoryError` in `SubstVisitor`), and lower fuel only
+-- turns that into `rOutOfFuel`. The remaining obstacle to a real differential
+-- corpus is therefore the cost of EVALUATING a benchmark-sized term in a
+-- typechecker, not the missing oracle -- a different problem, and one the
+-- harness (`test/run.py`, which runs the generated Java on a real JVM) already
+-- solves from the other side.
+--
+-- What is checked here instead is the correspondence the oracle is responsible
+-- for: the corpus's actual kernames, its actual `Bool` declaration, and a
+-- `case` that scrutinizes what the oracle returns.
 \func natAddKn : Kername => \new Kername (mpDot (mpFile nil) "Nat") "add"
 
 \func natAddProgram : LBProgram =>
@@ -226,7 +251,86 @@
   : runProgram lbAxioms partialProgram 200
   = rOk (app (const natAddKn) (prim (primInt, 20))) => idp
 
+\func partialRunsInJava
+  : runClass rtLong (compileClass "Prog" partialProgram) bodyMethodName 200
+  = rOk (rvValue (vBuiltin "PRIM_ADD_LONG" (vLong 20 :: nil))) => idp
+
 \func partialIsNotCompared : bothAgree partialProgram 200 = false => idp
+
+-- ---------------------------------------------------------------------------
+-- A BOOLEAN-RETURNING AXIOM, AND A `case` THAT READS IT.
+--
+-- The check the rest of this module does not reach: every other instance here
+-- compares a primitive int, so nothing exercises the fact that `axiomRun` has to
+-- return a value in the PROGRAM'S OWN inductive. `Formal/LbAxioms.ard` says why
+-- that is delicate -- "a boolean built with the wrong id would compute and then
+-- be stuck at the `case` that reads it", because `evalIota` checks that the
+-- scrutinee's constructor belongs to the inductive the `case` names -- so the
+-- claim needs a `case` on top of the axiom, not just the axiom.
+--
+-- The declaration is `Imported/LeanbenchEven.ard`'s, copied verbatim: the
+-- Lean frontend's root-module `Bool`, with `Bool.false` and `Bool.true` as
+-- constructors 0 and 1 and no parameters. So this pins `lbBool`'s inductive id
+-- AND its tag convention against the corpus, and against `mkBool` on the Java
+-- side, in one line.
+-- ---------------------------------------------------------------------------
+
+\func natBeqKn : Kername => \new Kername (mpDot (mpFile nil) "Nat") "beq"
+
+\func boolDecls : GlobalDeclarations =>
+  (natBeqKn, constantDecl (\new ConstantBody nothing)) ::
+  ((\new Kername (mpFile nil) "Bool"),
+   inductiveDecl
+     (\new MutualInductiveBody
+        finite
+        0
+        ((\new OneInductiveBody
+            "Bool"
+            false
+            IntoAny
+            ((\new ConstructorBody "Bool.false" 0) :: (\new ConstructorBody "Bool.true" 0) :: nil)
+            nil
+         ) :: nil))) :: nil
+
+-- `case (Nat.beq 3 3) of { false => 100 ; true => 200 }`, so the answer is 200
+-- exactly when the oracle's boolean is `Bool.true` of THIS `Bool`. A wrong
+-- inductive id computes a value and then stops at the `case`, which is the
+-- failure this rules out; a swapped tag convention picks 100.
+\func boolCaseProgram : LBProgram =>
+  (boolDecls,
+   case boolInd 0
+     (app (app (const natBeqKn) (prim (primInt, 3))) (prim (primInt, 3)))
+     (((nil : Array BinderName), prim (primInt, 100)) ::
+      ((nil : Array BinderName), prim (primInt, 200)) :: nil))
+
+\func boolCaseAgrees : bothAgree boolCaseProgram 500 = true => idp
+
+\func boolCaseInLambdaBox
+  : runProgram lbAxioms boolCaseProgram 500 = rOk (prim (primInt, 200)) => idp
+
+-- And the unscrutinized boolean itself, so that what `lbBool` builds is on
+-- record next to what `mkBool` builds (`vData 1 nil`).
+\func boolProgram : LBProgram =>
+  (boolDecls, app (app (const natBeqKn) (prim (primInt, 3))) (prim (primInt, 4)))
+
+\func boolFalseInLambdaBox
+  : runProgram lbAxioms boolProgram 500 = rOk (construct boolInd 0 nil) => idp
+
+\func boolFalseAgrees : bothAgree boolProgram 500 = true => idp
+
+-- The other corpus axiom, `Nat.sub`, which truncates at zero in Lean and is why
+-- `javaAxioms` sends it to `NAT_SUB_LONG` rather than the wrapping `PRIM_SUB`.
+-- 3 - 5 is 0, not -2.
+\func natSubKn : Kername => \new Kername (mpDot (mpFile nil) "Nat") "sub"
+
+\func natSubProgram : LBProgram =>
+  ((natSubKn, constantDecl (\new ConstantBody nothing)) :: nil,
+   app (app (const natSubKn) (prim (primInt, 3))) (prim (primInt, 5)))
+
+\func natSubTruncates
+  : runProgram lbAxioms natSubProgram 200 = rOk (prim (primInt, 0)) => idp
+
+\func natSubAgrees : bothAgree natSubProgram 200 = true => idp
 
 -- ---------------------------------------------------------------------------
 -- THE INT63/INT64 MISMATCH, as a disagreement between two written-down

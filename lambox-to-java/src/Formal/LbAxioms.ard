@@ -8,7 +8,7 @@
 \import Formal.LambdaBoxEval
 \import LambdaBox
 \import Set
-\import StringUtil (intEqB, intToStr, natToStr)
+\import StringUtil (intEqB)
 
 -- =============================================================================
 -- One instance of `LBSpec` (Formal/LambdaBoxEval.ard): what λ□'s axioms MEAN.
@@ -65,15 +65,24 @@
 --     on an inductive declaration this module would have to invent.
 --   * `Int.*` -- Lean's machine `Int` erases to the same λ□ primitive int as
 --     `Nat`, so these are expressible, but each needs its own convention
---     (`ediv`/`emod` are Euclidean) and none of the corpus reaches them yet.
+--     (`ediv`/`emod` are Euclidean). 8 occurrences in the corpus, all in
+--     `leanbench-deriv`.
 --   * `Nat.pow` -- unbounded exponentiation is not a gap in meaning but a
 --     hazard in practice (`Nat.pow 2 64` is a literal this evaluator would
---     build), so it is left out until a program needs it.
--- Each is a name `javaAxioms` DOES realize, so each is a place the Java side can
--- compute and this side cannot -- which is what `Formal/Agreement.ard` pins.
+--     build), so it is left out until a program needs it. 2 occurrences.
+-- Each is a name `javaAxioms` DOES realize, so each is a place the backend
+-- compiles something this module cannot explain. The counts are the census in
+-- `Formal/Agreement.ard`'s header, which also says which way each gap cuts --
+-- several of these are gaps in `Formal/RtLong.ard` too, and three names
+-- (`Nat.div`, `Nat.mod`, `Nat.ble`) are covered HERE and not there.
 -- =============================================================================
 
-\func pow2_63 : Nat => 9223372036854775808
+-- The `Uint63` modulus. Named for its ROLE rather than as `pow2_63`, which
+-- `Formal/RtLong.ard` already uses for the boundary at which a JVM `long`
+-- turns negative: the same number, but the two files mean different things by
+-- it, and one shared name across an import would be a clash warning and a
+-- worse comment.
+\func int63Mod : Nat => 9223372036854775808
 
 -- `x` reduced into [0, 2^63), the `Uint63` normal form.
 --
@@ -86,10 +95,10 @@
 -- `2^63 - 0` is `2^63`, not `0`; `neg 0` is DEFINITIONALLY `pos 0` (Prelude's
 -- constructor condition on `Int`), and the two clauses agree there.
 \func wrap63 (x : Int) : Nat \elim x
-  | pos n => n Nat.mod pow2_63
-  | neg n => \case n Nat.mod pow2_63 \with {
+  | pos n => n Nat.mod int63Mod
+  | neg n => \case n Nat.mod int63Mod \with {
     | 0 => 0
-    | suc k => iabs (pow2_63 Nat.- suc k)
+    | suc k => iabs (int63Mod Nat.- suc k)
   }
 
 -- ---------------------------------------------------------------------------
