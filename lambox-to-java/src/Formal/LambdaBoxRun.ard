@@ -18,21 +18,24 @@
 -- compared with what the compiled Java computes (`Formal/Agreement.ard` in the
 -- examples project does exactly that). A relation cannot be run.
 --
--- The obligation this creates is stated, not discharged:
+-- The obligations this creates, and where they stand:
 --
 --     evalT env n t = rOk v  ->  Eval env t v                     (soundness)
+--         PROVED, `Formal/LambdaBoxSound.ard`. So a value this function
+--         computes is backed by a derivation of the transcribed relation, and
+--         an agreement checked against it is an agreement with the SPEC.
+--
 --     Eval env t v           ->  \Sigma (n : Nat) (evalT env n t = rOk v)
 --                                                               (completeness)
+--         OPEN. Until it is proved, `rStuck` means "this function found no
+--         rule", not "the relation derives nothing" -- so a stuck result is
+--         evidence about the oracle, while an `rOk` result is evidence about
+--         the semantics.
 --
--- Neither is proved here. Until they are, a disagreement found by running this
--- is a disagreement with THIS function, and the first thing to check is whether
--- the function or the relation is wrong. What makes that a fair bet is that
--- every clause below is a transcription of the relation's clause of the same
+-- Every clause below is a transcription of the relation's clause of the same
 -- name, with the same side conditions in the same order -- `evalDelta` next to
--- the `const` clause, `evalIota` next to `case`, and so on. The Java fragment's
--- semantics is a function for the same reason and pays the same price, except
--- that there it is the ONLY semantics (no upstream relation exists to be the
--- spec), so there is nothing to disagree with.
+-- the `const` clause, `evalIota` next to `case`, and so on; the soundness proof
+-- is structured the same way, one case per clause.
 --
 -- Fuel is the first `\elim` argument and strictly decreases at every recursive
 -- call, exactly as in `Formal/JavaEval.ard`. `rStuck` means "no rule applies",
@@ -159,13 +162,19 @@
   }
 
 -- Fields left to right, as `evalConstruct`'s pointwise premise says.
-\func evalArgsT (env : GlobalDeclarations) (n : Nat) (xs : Array LBTerm) : Res (Array LBTerm)
+--
+-- The result is indexed by the INPUT's length, which is not decoration: the
+-- relation's `evalConstruct` wants `vs : Array LBTerm args.len` and a pointwise
+-- premise over `Fin args.len`, so a plain `Array LBTerm` here would owe a
+-- length lemma and a transport at exactly the place the proof of soundness
+-- (`Formal/LambdaBoxSound.ard`) needs to build that constructor.
+\func evalArgsT (env : GlobalDeclarations) (n : Nat) (xs : Array LBTerm) : Res (Array LBTerm xs.len)
   \elim n, xs
   | 0, _ => rOutOfFuel
   | suc _, nil => rOk nil
   | suc n, x :: xs =>
     bindRes (evalT env n x) (\lam v =>
-    bindRes (evalArgsT env n xs) (\lam vs => rOk {Array LBTerm} (v :: vs)))
+    bindRes (evalArgsT env n xs) (\lam vs => rOk (v :: vs)))
 
 -- Running a program is evaluating its body in its declarations, as
 -- `EvalProgram` says for the relation.

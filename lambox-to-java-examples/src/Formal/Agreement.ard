@@ -5,7 +5,9 @@
 \import ExamplePeano
 \import Formal.JavaEval
 \import Formal.JavaValue
+\import Formal.LambdaBoxEval
 \import Formal.LambdaBoxRun
+\import Formal.LambdaBoxSound
 \import Formal.Res
 \import Formal.RtLong
 \import JavaAst
@@ -96,6 +98,18 @@
 -- 1 + 3 on unary naturals: `fix`, `case`, `construct` and a `const` unfolding,
 -- which between them are every λ□ rule that fires without an axiom.
 \func peanoAgrees : bothAgree addProgram 2000 = true => idp
+
+-- WITH SOUNDNESS, the oracle's answer IS a derivation of the relation. This is
+-- `Eval` for a real program -- 1 + 3 through a `fix`, a `case` and a `const`
+-- unfolding -- obtained by computation rather than by hand, which is what the
+-- relation alone could not give: its own sanity checks in
+-- `Formal/LambdaBoxEval.ard` are `id`, `let`, a literal and a one-line `fix`,
+-- because a derivation for anything bigger is not writable by hand.
+--
+-- So `peanoAgrees` above is not "the oracle and the Java semantics agree" but
+-- "λ□'s semantics and the Java semantics agree", on this program.
+\func peanoEvalsToFour : EvalProgram addProgram (suc' (suc' (suc' (suc' zero'))))
+  => evalT-sound 2000 idp
 
 -- A bare constructor value, with no computation at all: the corresponding pair
 -- is `suc (suc zero)` and `Data(1, {Data(1, {Data(0, {})})})`.

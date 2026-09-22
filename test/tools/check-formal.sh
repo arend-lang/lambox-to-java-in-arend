@@ -34,6 +34,7 @@ compiler_modules=(
   Formal.JavaEval
   Formal.LambdaBoxEval
   Formal.LambdaBoxRun
+  Formal.LambdaBoxSound
   Formal.RtLong
   Formal.NodePathUnique
 )
